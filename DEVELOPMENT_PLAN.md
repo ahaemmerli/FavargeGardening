@@ -240,19 +240,35 @@ This should remain a later-stage feature because it depends on accurate garden g
 
 ## Development Phases
 
-### Phase 0: Project Setup
+### Phase 0: Project Setup - Complete
 
-- Finalize repository authentication and push the initial commit.
-- Choose frontend tooling.
-- Add linting, formatting, and test runner.
-- Create project issue list.
+- Initialized the Git repository.
+- Added the development plan.
+- Chose React, TypeScript, and Vite for the frontend.
+- Created the first app shell.
+- Added local build tooling with `npm run build`.
+- Added ESLint with TypeScript / React rules.
+- Added Prettier formatting.
+- Added Vitest test runner and initial planner unit tests.
+- Created the project problem list.
+- Started a local development server workflow.
+- Integrated the measured garden drawing as the source for bed geometry.
+- Fixed GitHub authentication and push workflow.
 
-### Phase 1: Garden Map Foundation
+Deferred setup items:
 
-- Build a measured 2D garden canvas.
-- Add garden beds, paths, and fixed objects.
-- Support pan, zoom, select, edit, and save.
-- Import the user's measured drawing as a reference layer.
+- Decide whether to mirror the problem list into GitHub Issues.
+
+### Phase 1: Garden Map Foundation - In Progress
+
+- Done: Built a measured 2D garden canvas from the user's SVG drawing.
+- Done: Added structured garden geometry for beds, access zones, boundary, and real-world bed dimensions.
+- Done: Added coordinate-to-meter conversion helpers and tests.
+- Done: Added basic pan, zoom, and reset controls.
+- Done: Added garden geometry unit tests.
+- Remaining: Constrain manual placement dragging to valid beds.
+- Remaining: Add richer bed selection/editing behavior.
+- Remaining: Add a reference-layer workflow for future drawing updates.
 
 ### Phase 2: Crop Catalog
 
