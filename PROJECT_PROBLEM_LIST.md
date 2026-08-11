@@ -30,11 +30,11 @@ Acceptance criteria:
 - Tests cover the coordinate-to-meter conversion.
 
 Resolution:
-Added `src/garden.ts` with structured bed/access-zone geometry, real-world dimensions, SVG-to-meter conversion helpers, view-box helpers, and unit tests.
+Added `src/garden.ts` with structured bed/access-zone geometry, 50x drawing-scale conversion helpers, view-box helpers, and unit tests. The corrected drawing now matches the expected lower-left bed dimensions.
 
 ### P0-002: Crop Blocks Need Real Spacing Logic
 
-Status: In progress
+Status: Done
 
 Problem:
 Suggested crop blocks currently use rough visual rectangle sizes. The app needs plant spacing, row spacing, plant count, and usable area calculations.
@@ -50,9 +50,12 @@ Acceptance criteria:
 - Suggestions fail gracefully when requested crops do not fit.
 - Tests cover at least one crop that fits and one crop that does not fit.
 
+Progress:
+The starter crop catalog now includes in-row and between-row spacing in centimeters, and suggested rectangles derive from those spacing values. Small crops can be grouped into multi-plant blocks, and resizing a block updates row/column count from the spacing grid. Values are currently curated starter data with source notes; they still need a stronger import or verification workflow.
+
 ### P0-003: Manual Placements Can Leave Beds
 
-Status: Open
+Status: In progress
 
 Problem:
 Crop blocks can currently be dragged around the full map bounds. They should snap to or remain inside valid bed areas unless the user intentionally moves them elsewhere.
@@ -66,6 +69,9 @@ Acceptance criteria:
 - App detects and warns about crop blocks outside beds.
 - Locked invalid placements are visibly flagged.
 - Tests cover placement validity checks.
+
+Resolution:
+Crop block movement and resizing are constrained to the assigned bed. The current implementation prevents invalid placement through clamping rather than allowing invalid placements and warning afterward.
 
 ### P0-004: Suggestions Need Explainable Scoring
 
@@ -102,7 +108,7 @@ Acceptance criteria:
 - Mobile layout remains usable.
 
 Progress:
-Basic pan, zoom, and reset controls are implemented. Selection detail and mobile interaction still need refinement.
+Basic pan, zoom, reset controls, bed selection, direct bed move/resize, garden-definition editing, blank garden creation, and SVG import are implemented. Mobile interaction still needs refinement.
 
 ### P1-002: Crop Request UI Needs Better Inputs
 
@@ -147,6 +153,9 @@ Acceptance criteria:
 - At least 20 common vegetables are included.
 - Companion rules distinguish strong evidence, common practice, and weak anecdote.
 - Tests validate required fields are present for every crop.
+
+Progress:
+The crop schema now includes `spacingSource` notes. The current values are local starter data; a sourceable catalog import workflow remains open.
 
 ### P1-005: Companion Planting Rules Need Confidence Levels
 

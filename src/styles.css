@@ -125,6 +125,12 @@ button {
   fill: #7bcf63;
   stroke: #4d9d39;
   stroke-width: 1.4;
+  cursor: pointer;
+}
+
+.selected-access-zone {
+  stroke: #31505b;
+  stroke-width: 3;
 }
 
 .access-label {
@@ -145,6 +151,19 @@ button {
   fill: #fffdf7;
   stroke: #1f261f;
   stroke-width: 1.6;
+  cursor: pointer;
+}
+
+.selected-bed {
+  stroke: #31505b;
+  stroke-width: 4;
+}
+
+.bed-resize-handle {
+  fill: #31505b;
+  stroke: #fffdf7;
+  stroke-width: 1.5;
+  cursor: nwse-resize;
 }
 
 .bed-label {
@@ -169,11 +188,30 @@ button {
   stroke-width: 4;
 }
 
-.placement-name {
+.placement-icon {
   fill: #fffdf7;
   font-size: 16px;
   font-weight: 900;
+  text-anchor: middle;
+  paint-order: stroke;
+  stroke: rgba(34, 48, 39, 0.45);
+  stroke-width: 3px;
+  stroke-linejoin: round;
   pointer-events: none;
+}
+
+.plant-marker {
+  fill: rgba(255, 253, 247, 0.82);
+  stroke: rgba(34, 48, 39, 0.34);
+  stroke-width: 1;
+  pointer-events: none;
+}
+
+.resize-handle {
+  fill: #fffdf7;
+  stroke: rgba(34, 48, 39, 0.72);
+  stroke-width: 1.4;
+  cursor: nwse-resize;
 }
 
 .placement-meta {
@@ -312,6 +350,101 @@ button {
   margin: 0;
   color: #425044;
   line-height: 1.4;
+}
+
+.field-label {
+  display: grid;
+  gap: 6px;
+  color: #687063;
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.field-label input {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid #cfc8b8;
+  border-radius: 7px;
+  background: #fffdf7;
+  color: #223027;
+  font: inherit;
+  padding: 0 10px;
+}
+
+.definition-grid {
+  display: grid;
+  grid-template-columns: minmax(80px, auto) 1fr;
+  gap: 8px 12px;
+  align-items: center;
+  color: #687063;
+  font-size: 0.88rem;
+}
+
+.definition-grid strong {
+  color: #223027;
+}
+
+.button-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.file-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  border: 1px solid #cfc8b8;
+  border-radius: 7px;
+  background: #fffdf7;
+  color: #263128;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.file-button input {
+  display: none;
+}
+
+.geometry-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.geometry-grid .field-label {
+  min-width: 0;
+}
+
+.geometry-grid input {
+  padding: 0 6px;
+}
+
+.segmented-control {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border: 1px solid #cfc8b8;
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.segmented-control button {
+  min-height: 38px;
+  border: 0;
+  background: #fffdf7;
+  color: #263128;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.segmented-control button + button {
+  border-left: 1px solid #cfc8b8;
+}
+
+.segmented-control .active {
+  background: #24382b;
+  color: #fffdf7;
 }
 
 .muted {

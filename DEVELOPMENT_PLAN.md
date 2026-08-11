@@ -263,17 +263,26 @@ Deferred setup items:
 
 - Done: Built a measured 2D garden canvas from the user's SVG drawing.
 - Done: Added structured garden geometry for beds, access zones, boundary, and real-world bed dimensions.
-- Done: Added coordinate-to-meter conversion helpers and tests.
+- Done: Added 50x drawing-scale conversion helpers and tests.
 - Done: Added basic pan, zoom, and reset controls.
 - Done: Added garden geometry unit tests.
-- Remaining: Constrain manual placement dragging to valid beds.
-- Remaining: Add richer bed selection/editing behavior.
+- Done: Added persisted garden definition editing for garden name, bed names, and bed sun exposure.
+- Done: Constrained manual placement dragging and resizing to valid beds.
+- Done: Added path/access-zone selection and persisted naming/type metadata.
+- Done: Added manual garden-definition editing from scratch.
+- Done: Added SVG file import for beds and path/access zones.
+- Done: Beds can be moved and resized directly on the map.
+- Remaining: Add richer visual bed/path drawing tools.
 - Remaining: Add a reference-layer workflow for future drawing updates.
+- Note: The SVG scale is 1 drawing mm = 50 real mm. The corrected drawing derives the three right beds to 5 m x 1.25 m and the lower-left bed to 3 m x 1 m.
 
 ### Phase 2: Crop Catalog
 
-- Add seed crop data for common vegetables.
-- Define spacing, family, water need, sun need, and companion rules.
+- In progress: Add seed crop data for common vegetables.
+- In progress: Define spacing, family, water need, sun need, and companion rules.
+- Done: Crop placement rectangle sizes now derive from spacing requirements in centimeters.
+- Done: Small crops can be grouped into multi-plant blocks.
+- Done: Resizing a crop block updates its row/column grid and plant count.
 - Build crop selection UI.
 
 ### Phase 3: Placement Planner
