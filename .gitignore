@@ -11,9 +11,13 @@ venv/
 .env
 .env.*
 
+# Node / frontend
+node_modules/
+dist/
+*.local
+
 # OS / editor
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
-
