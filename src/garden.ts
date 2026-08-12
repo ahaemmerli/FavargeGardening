@@ -28,9 +28,15 @@ export type GardenDefinition = {
   name: string;
   sourceDrawing: string;
   scaleDescription: string;
+  locked: boolean;
   boundary: RectGeometry;
   beds: Bed[];
   accessZones: AccessZone[];
+};
+
+export type SavedGardenDefinition = Partial<Omit<GardenDefinition, "beds" | "accessZones">> & {
+  beds?: Partial<Bed>[];
+  accessZones?: Partial<AccessZone>[];
 };
 
 export const defaultGardenViewBox: GardenViewBox = {
@@ -142,6 +148,7 @@ export const defaultGardenDefinition: GardenDefinition = {
   name: "Favarge garden",
   sourceDrawing: "favargemap.svg",
   scaleDescription: "1 drawing mm = 50 real mm",
+  locked: false,
   boundary: gardenBoundary,
   beds,
   accessZones,
@@ -162,6 +169,7 @@ export function createBlankGardenDefinition(): GardenDefinition {
     name: "New garden",
     sourceDrawing: "manual",
     scaleDescription: "1 drawing mm = 50 real mm",
+    locked: false,
     boundary: { ...gardenBoundary },
     beds: [],
     accessZones: [],
@@ -189,6 +197,61 @@ export function createAccessZone(index: number): AccessZone {
     y: gardenBoundary.y + 156,
     width: metersToSvgFromScale(2),
     height: metersToSvgFromScale(0.5),
+  };
+}
+
+function numberOrFallback(value: unknown, fallback: number) {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function optionalNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function stringOrFallback(value: unknown, fallback: string) {
+  return typeof value === "string" && value.trim() ? value : fallback;
+}
+
+function normalizeRectGeometry(
+  value: Partial<RectGeometry> | undefined,
+  fallback: RectGeometry,
+): RectGeometry {
+  return {
+    x: numberOrFallback(value?.x, fallback.x),
+    y: numberOrFallback(value?.y, fallback.y),
+    width: Math.max(1, numberOrFallback(value?.width, fallback.width)),
+    height: Math.max(1, numberOrFallback(value?.height, fallback.height)),
+  };
+}
+
+export function normalizeGardenDefinition(
+  value: SavedGardenDefinition | undefined,
+  fallback = createDefaultGardenDefinition(),
+): GardenDefinition {
+  const importedBeds = Array.isArray(value?.beds) ? value.beds : fallback.beds;
+  const importedAccessZones = Array.isArray(value?.accessZones) ? value.accessZones : fallback.accessZones;
+
+  return {
+    id: stringOrFallback(value?.id, fallback.id),
+    name: stringOrFallback(value?.name, fallback.name),
+    sourceDrawing: stringOrFallback(value?.sourceDrawing, fallback.sourceDrawing),
+    scaleDescription: stringOrFallback(value?.scaleDescription, fallback.scaleDescription),
+    locked: typeof value?.locked === "boolean" ? value.locked : fallback.locked,
+    boundary: normalizeRectGeometry(value?.boundary, fallback.boundary),
+    beds: importedBeds.map((bed, index) => ({
+      ...normalizeRectGeometry(bed, fallback.beds[index] ?? createBed(index + 1)),
+      id: stringOrFallback(bed.id, `bed-${index + 1}`),
+      name: stringOrFallback(bed.name, `Bed ${index + 1}`),
+      labelWidthMeters: optionalNumber(bed.labelWidthMeters),
+      labelHeightMeters: optionalNumber(bed.labelHeightMeters),
+      sun: bed.sun === "partial" ? "partial" : "full",
+    })),
+    accessZones: importedAccessZones.map((zone, index) => ({
+      ...normalizeRectGeometry(zone, fallback.accessZones[index] ?? createAccessZone(index + 1)),
+      id: stringOrFallback(zone.id, `access-${index + 1}`),
+      name: stringOrFallback(zone.name, `Path ${index + 1}`),
+      kind: zone.kind === "access" ? "access" : "path",
+    })),
   };
 }
 
@@ -267,6 +330,19 @@ export function metersToSvgFromScale(meters: number) {
   return (meters * 1000 * svgUnitsPerDrawingMm) / realMmPerDrawingMm;
 }
 
+export function chooseScaleBarMeters(viewBox: GardenViewBox) {
+  const maxBarWidth = viewBox.width * 0.24;
+  const candidates = [5, 2, 1, 0.5, 0.25, 0.1];
+
+  return candidates.find((meters) => metersToSvgFromScale(meters) <= maxBarWidth) ?? 0.1;
+}
+
+export function formatScaleBarLabel(meters: number) {
+  if (meters >= 1) return `${Number(meters.toFixed(2)).toString()} m`;
+
+  return `${Number((meters * 100).toFixed(1)).toString()} cm`;
+}
+
 export function centimetersToSvgWidth(bed: Bed, centimeters: number) {
   return metersToSvgWidth(bed, centimeters / 100);
 }
@@ -338,8 +414,27 @@ export function clampRectSizeToBed(rect: RectGeometry, bed: Bed): RectGeometry {
   };
 }
 
+export function clampRectToBoundary(rect: RectGeometry, boundary: RectGeometry): RectGeometry {
+  const width = Math.max(1, Math.min(rect.width, boundary.width));
+  const height = Math.max(1, Math.min(rect.height, boundary.height));
+
+  return {
+    ...rect,
+    width,
+    height,
+    x: Math.max(boundary.x, Math.min(boundary.x + boundary.width - width, rect.x)),
+    y: Math.max(boundary.y, Math.min(boundary.y + boundary.height - height, rect.y)),
+  };
+}
+
 export function findContainingBed(rect: RectGeometry, candidates = beds) {
   return candidates.find((bed) => isRectInsideBed(rect, bed));
+}
+
+export function findBedAtPoint(x: number, y: number, candidates = beds) {
+  return candidates.find(
+    (bed) => x >= bed.x && y >= bed.y && x <= bed.x + bed.width && y <= bed.y + bed.height,
+  );
 }
 
 export function zoomViewBox(viewBox: GardenViewBox, factor: number): GardenViewBox {

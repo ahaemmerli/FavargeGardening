@@ -11,35 +11,52 @@ import {
   RotateCcw,
   Sparkles,
   Sprout,
+  X,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
 import {
+  clampRectToBoundary,
   clampRectSizeToBed,
   clampRectToBed,
+  chooseScaleBarMeters,
   createAccessZone,
   createBed,
   createBlankGardenDefinition,
   createDefaultGardenDefinition,
   defaultGardenViewBox,
+  findBedAtPoint,
+  formatScaleBarLabel,
   getBedLabel,
+  metersToSvgFromScale,
+  normalizeGardenDefinition,
   parseGardenDefinitionFromSvg,
   panViewBox,
+  svgUnitsToRealMeters,
   type GardenDefinition,
   type RectGeometry,
+  type SavedGardenDefinition,
   type SunExposure,
   zoomViewBox,
 } from "./garden";
 import {
-  createSuggestions,
+  calculateGardenValueScore,
   cropById,
   crops,
+  describeCropIntent,
+  describeGardenValue,
   describeWater,
+  describeYieldEstimate,
+  suggestAdditionalCrops,
+  type CropId,
+  type CropRequest,
+} from "./cropCatalog";
+import {
+  analyzePlacements,
+  createSuggestions,
   getBlockLayoutFromSize,
   getCropFootprint,
   getCompanionSummary,
-  type CropId,
-  type CropRequest,
   type Placement,
 } from "./planner";
 
@@ -49,8 +66,14 @@ const gardenStorageKey = "favarge-gardening-definition-v1";
 type ActiveMapInteraction =
   | { type: "move-placement"; id: string; dx: number; dy: number }
   | { type: "resize-placement"; id: string; startX: number; startY: number }
+  | { type: "move-boundary"; dx: number; dy: number }
+  | { type: "resize-boundary"; startX: number; startY: number }
   | { type: "move-bed"; id: string; dx: number; dy: number }
-  | { type: "resize-bed"; id: string; startX: number; startY: number };
+  | { type: "resize-bed"; id: string; startX: number; startY: number }
+  | { type: "move-access-zone"; id: string; dx: number; dy: number }
+  | { type: "resize-access-zone"; id: string; startX: number; startY: number };
+
+type SidebarTab = "garden" | "crops" | "analysis";
 
 function loadPlacements() {
   const saved = window.localStorage.getItem(storageKey);
@@ -80,21 +103,9 @@ function loadGardenDefinition(): GardenDefinition {
   if (!saved) return fallback;
 
   try {
-    const parsed = JSON.parse(saved) as Partial<GardenDefinition>;
+    const parsed = JSON.parse(saved) as SavedGardenDefinition;
 
-    return {
-      ...fallback,
-      ...parsed,
-      boundary: { ...fallback.boundary, ...parsed.boundary },
-      beds: fallback.beds.map((bed) => ({
-        ...bed,
-        ...parsed.beds?.find((candidate) => candidate.id === bed.id),
-      })),
-      accessZones: fallback.accessZones.map((zone) => ({
-        ...zone,
-        ...parsed.accessZones?.find((candidate) => candidate.id === zone.id),
-      })),
-    };
+    return normalizeGardenDefinition(parsed, fallback);
   } catch {
     return fallback;
   }
@@ -104,21 +115,82 @@ function formatCoordinate(value: number) {
   return Number(value.toFixed(2)).toString();
 }
 
+function formatMeterCoordinate(svgUnits: number) {
+  return formatCoordinate(svgUnitsToRealMeters(svgUnits));
+}
+
+function formatGeometryLabel(key: keyof RectGeometry) {
+  return `${key} (m)`;
+}
+
+function metersInputToSvgUnits(value: number) {
+  return metersToSvgFromScale(Math.max(0, value));
+}
+
+function formatYieldAmount(value: number) {
+  return Number(value.toFixed(1)).toString();
+}
+
+function calculatePlacementAreaSquareMeters(placement: Placement) {
+  return svgUnitsToRealMeters(placement.width) * svgUnitsToRealMeters(placement.height);
+}
+
+function describePlacementYield(placement: Placement) {
+  const crop = cropById[placement.cropId];
+  const estimate = crop.yieldEstimate;
+  const multiplier =
+    estimate.basis === "perPlant" ? placement.plantCount : calculatePlacementAreaSquareMeters(placement);
+  const amount = estimate.range
+    ? `${formatYieldAmount(estimate.range.low * multiplier)}-${formatYieldAmount(estimate.range.high * multiplier)}`
+    : formatYieldAmount(estimate.amount * multiplier);
+
+  return `${amount} ${estimate.unit}`;
+}
+
+function createGardenDefinitionFilename(name: string) {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+
+  return `${slug || "garden"}-definition.json`;
+}
+
+function moveGardenDefinition(garden: GardenDefinition, deltaX: number, deltaY: number): GardenDefinition {
+  return {
+    ...garden,
+    boundary: {
+      ...garden.boundary,
+      x: garden.boundary.x + deltaX,
+      y: garden.boundary.y + deltaY,
+    },
+    beds: garden.beds.map((bed) => ({ ...bed, x: bed.x + deltaX, y: bed.y + deltaY })),
+    accessZones: garden.accessZones.map((zone) => ({
+      ...zone,
+      x: zone.x + deltaX,
+      y: zone.y + deltaY,
+    })),
+  };
+}
+
 export function App() {
-  const [requests, setRequests] = React.useState<CropRequest>({
-    tomato: 2,
-    basil: 1,
-    carrot: 1,
-    lettuce: 1,
-    bean: 0,
-    cabbage: 0,
-  });
+  const [requests, setRequests] = React.useState<CropRequest[]>([
+    { cropId: "tomato", priority: "must", intent: "normal" },
+    { cropId: "basil", priority: "nice", intent: "normal" },
+    { cropId: "carrot", priority: "nice", intent: "some" },
+    { cropId: "lettuce", priority: "nice", intent: "some" },
+  ]);
+  const [cropPickerOpen, setCropPickerOpen] = React.useState(false);
+  const [cropSearch, setCropSearch] = React.useState("");
   const [placements, setPlacements] = React.useState<Placement[]>(loadPlacements);
   const [garden, setGarden] = React.useState<GardenDefinition>(loadGardenDefinition);
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [selectedBedId, setSelectedBedId] = React.useState(garden.beds[0]?.id ?? "");
   const [selectedAccessZoneId, setSelectedAccessZoneId] = React.useState(garden.accessZones[0]?.id ?? "");
   const [viewBox, setViewBox] = React.useState(defaultGardenViewBox);
+  const [gardenSaveStatus, setGardenSaveStatus] = React.useState("Saved locally");
+  const [activeSidebarTab, setActiveSidebarTab] = React.useState<SidebarTab>("crops");
   const interactionRef = React.useRef<ActiveMapInteraction | null>(null);
 
   React.useEffect(() => {
@@ -127,17 +199,38 @@ export function App() {
 
   React.useEffect(() => {
     window.localStorage.setItem(gardenStorageKey, JSON.stringify(garden));
+    setGardenSaveStatus("Saved locally");
   }, [garden]);
 
   const selectedPlacement = placements.find((placement) => placement.id === selectedId);
   const selectedBed = garden.beds.find((bed) => bed.id === selectedBedId);
   const selectedAccessZone = garden.accessZones.find((zone) => zone.id === selectedAccessZoneId);
+  const gardenDefinitionLocked = garden.locked;
 
-  function updateRequest(cropId: CropId, delta: number) {
-    setRequests((current) => ({
-      ...current,
-      [cropId]: Math.max(0, current[cropId] + delta),
-    }));
+  function addCropRequest(cropId: CropId) {
+    setRequests((current) =>
+      current.some((request) => request.cropId === cropId)
+        ? current
+        : [...current, { cropId, priority: "nice", intent: "normal" }],
+    );
+    setCropSearch("");
+    setCropPickerOpen(false);
+  }
+
+  function removeCropRequest(cropId: CropId) {
+    setRequests((current) => current.filter((request) => request.cropId !== cropId));
+  }
+
+  function updateRequestPriority(cropId: CropId, priority: CropRequest["priority"]) {
+    setRequests((current) =>
+      current.map((request) => (request.cropId === cropId ? { ...request, priority } : request)),
+    );
+  }
+
+  function updateRequestIntent(cropId: CropId, intent: CropRequest["intent"]) {
+    setRequests((current) =>
+      current.map((request) => (request.cropId === cropId ? { ...request, intent } : request)),
+    );
   }
 
   function suggestPlan() {
@@ -175,7 +268,37 @@ export function App() {
   }
 
   function updateGardenName(name: string) {
+    if (gardenDefinitionLocked) return;
     setGarden((current) => ({ ...current, name }));
+  }
+
+  function updateGardenBoundaryGeometry(key: keyof RectGeometry, value: number) {
+    if (gardenDefinitionLocked) return;
+    if (!Number.isFinite(value)) return;
+    const svgValue = metersInputToSvgUnits(value);
+
+    if (key === "x" || key === "y") {
+      const deltaX = key === "x" ? svgValue - garden.boundary.x : 0;
+      const deltaY = key === "y" ? svgValue - garden.boundary.y : 0;
+
+      setGarden((current) => moveGardenDefinition(current, deltaX, deltaY));
+      setPlacements((current) =>
+        current.map((placement) => ({
+          ...placement,
+          x: placement.x + deltaX,
+          y: placement.y + deltaY,
+        })),
+      );
+      return;
+    }
+
+    setGarden((current) => ({
+      ...current,
+      boundary: {
+        ...current.boundary,
+        [key]: Math.max(48, svgValue),
+      },
+    }));
   }
 
   function replaceGarden(nextGarden: GardenDefinition) {
@@ -187,27 +310,77 @@ export function App() {
   }
 
   function resetGardenDefinition() {
+    if (gardenDefinitionLocked) return;
     replaceGarden(createDefaultGardenDefinition());
   }
 
   function startBlankGarden() {
+    if (gardenDefinitionLocked) return;
     replaceGarden(createBlankGardenDefinition());
   }
 
   async function importGardenFromSvg(file: File) {
+    if (gardenDefinitionLocked) return;
     const text = await file.text();
     replaceGarden(parseGardenDefinitionFromSvg(text, file.name));
   }
 
+  async function importGardenDefinitionFromJson(file: File) {
+    if (gardenDefinitionLocked) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as SavedGardenDefinition;
+      replaceGarden(normalizeGardenDefinition(parsed));
+      setGardenSaveStatus(`Imported ${file.name}`);
+    } catch {
+      setGardenSaveStatus("Import failed");
+    }
+  }
+
+  function saveGardenDefinition() {
+    window.localStorage.setItem(gardenStorageKey, JSON.stringify(garden));
+
+    const blob = new Blob([`${JSON.stringify(garden, null, 2)}\n`], {
+      type: "application/json",
+    });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = createGardenDefinitionFilename(garden.name);
+    link.click();
+    window.setTimeout(() => window.URL.revokeObjectURL(url), 0);
+    setGardenSaveStatus("Saved JSON file");
+  }
+
+  function toggleGardenDefinitionLock() {
+    setGarden((current) => ({
+      ...current,
+      locked: !current.locked,
+    }));
+  }
+
   function addBed() {
+    if (gardenDefinitionLocked) return;
     setGarden((current) => {
-      const bed = createBed(current.beds.length + 1);
+      const defaultBed = createBed(current.beds.length + 1);
+      const bed = {
+        ...defaultBed,
+        ...clampRectToBoundary(
+          {
+            ...defaultBed,
+            x: current.boundary.x + 24,
+            y: current.boundary.y + 24,
+          },
+          current.boundary,
+        ),
+      };
       setSelectedBedId(bed.id);
       return { ...current, beds: [...current.beds, bed] };
     });
   }
 
   function deleteSelectedBed() {
+    if (gardenDefinitionLocked) return;
     if (!selectedBedId) return;
     setGarden((current) => ({
       ...current,
@@ -219,14 +392,27 @@ export function App() {
   }
 
   function addAccessZone() {
+    if (gardenDefinitionLocked) return;
     setGarden((current) => {
-      const zone = createAccessZone(current.accessZones.length + 1);
+      const defaultZone = createAccessZone(current.accessZones.length + 1);
+      const zone = {
+        ...defaultZone,
+        ...clampRectToBoundary(
+          {
+            ...defaultZone,
+            x: current.boundary.x + 24,
+            y: current.boundary.y + 156,
+          },
+          current.boundary,
+        ),
+      };
       setSelectedAccessZoneId(zone.id);
       return { ...current, accessZones: [...current.accessZones, zone] };
     });
   }
 
   function deleteSelectedAccessZone() {
+    if (gardenDefinitionLocked) return;
     if (!selectedAccessZoneId) return;
     setGarden((current) => ({
       ...current,
@@ -237,6 +423,7 @@ export function App() {
   }
 
   function updateSelectedBedName(name: string) {
+    if (gardenDefinitionLocked) return;
     if (!selectedBedId) return;
     setGarden((current) => ({
       ...current,
@@ -245,6 +432,7 @@ export function App() {
   }
 
   function updateSelectedBedSun(sun: SunExposure) {
+    if (gardenDefinitionLocked) return;
     if (!selectedBedId) return;
     setGarden((current) => ({
       ...current,
@@ -253,18 +441,32 @@ export function App() {
   }
 
   function updateSelectedBedGeometry(key: keyof RectGeometry, value: number) {
-    if (!selectedBedId || !Number.isFinite(value)) return;
+    if (gardenDefinitionLocked) return;
+    if (!selectedBed || !Number.isFinite(value)) return;
+    const svgValue = metersInputToSvgUnits(value);
+    const nextBed = {
+      ...selectedBed,
+      ...clampRectToBoundary(
+        { ...selectedBed, [key]: Math.max(key === "width" || key === "height" ? 1 : 0, svgValue) },
+        garden.boundary,
+      ),
+    };
+
     setGarden((current) => ({
       ...current,
-      beds: current.beds.map((bed) =>
-        bed.id === selectedBedId
-          ? { ...bed, [key]: Math.max(key === "width" || key === "height" ? 1 : 0, value) }
-          : bed,
-      ),
+      beds: current.beds.map((bed) => (bed.id === selectedBed.id ? nextBed : bed)),
     }));
+    setPlacements((current) =>
+      current.map((placement) =>
+        placement.bedId === selectedBed.id
+          ? { ...placement, ...clampRectToBed(placement, nextBed) }
+          : placement,
+      ),
+    );
   }
 
   function updateSelectedAccessZoneName(name: string) {
+    if (gardenDefinitionLocked) return;
     if (!selectedAccessZoneId) return;
     setGarden((current) => ({
       ...current,
@@ -275,6 +477,7 @@ export function App() {
   }
 
   function updateSelectedAccessZoneKind(kind: "path" | "access") {
+    if (gardenDefinitionLocked) return;
     if (!selectedAccessZoneId) return;
     setGarden((current) => ({
       ...current,
@@ -285,15 +488,58 @@ export function App() {
   }
 
   function updateSelectedAccessZoneGeometry(key: keyof RectGeometry, value: number) {
+    if (gardenDefinitionLocked) return;
     if (!selectedAccessZoneId || !Number.isFinite(value)) return;
+    const svgValue = metersInputToSvgUnits(value);
+
     setGarden((current) => ({
       ...current,
       accessZones: current.accessZones.map((zone) =>
         zone.id === selectedAccessZoneId
-          ? { ...zone, [key]: Math.max(key === "width" || key === "height" ? 1 : 0, value) }
+          ? {
+              ...zone,
+              ...clampRectToBoundary(
+                { ...zone, [key]: Math.max(key === "width" || key === "height" ? 1 : 0, svgValue) },
+                current.boundary,
+              ),
+            }
           : zone,
       ),
     }));
+  }
+
+  function startBoundaryDrag(event: React.PointerEvent<SVGRectElement>) {
+    if (gardenDefinitionLocked) return;
+    const svg = event.currentTarget.ownerSVGElement;
+    if (!svg) return;
+    const point = svg.createSVGPoint();
+    point.x = event.clientX;
+    point.y = event.clientY;
+    const cursor = point.matrixTransform(svg.getScreenCTM()?.inverse());
+
+    interactionRef.current = {
+      type: "move-boundary",
+      dx: cursor.x - garden.boundary.x,
+      dy: cursor.y - garden.boundary.y,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setSelectedBedId("");
+    setSelectedAccessZoneId("");
+    setSelectedId(null);
+  }
+
+  function startBoundaryResize(event: React.PointerEvent<SVGRectElement>) {
+    if (gardenDefinitionLocked) return;
+    event.stopPropagation();
+    interactionRef.current = {
+      type: "resize-boundary",
+      startX: garden.boundary.x,
+      startY: garden.boundary.y,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setSelectedBedId("");
+    setSelectedAccessZoneId("");
+    setSelectedId(null);
   }
 
   function startDrag(event: React.PointerEvent<SVGRectElement>, placement: Placement) {
@@ -313,6 +559,7 @@ export function App() {
     };
     event.currentTarget.setPointerCapture(event.pointerId);
     setSelectedId(placement.id);
+    setActiveSidebarTab("analysis");
   }
 
   function moveDrag(event: React.PointerEvent<SVGSVGElement>) {
@@ -323,6 +570,47 @@ export function App() {
     point.x = event.clientX;
     point.y = event.clientY;
     const cursor = point.matrixTransform(svg.getScreenCTM()?.inverse());
+    const definitionInteraction =
+      activeInteraction.type === "move-boundary" ||
+      activeInteraction.type === "resize-boundary" ||
+      activeInteraction.type === "move-bed" ||
+      activeInteraction.type === "resize-bed" ||
+      activeInteraction.type === "move-access-zone" ||
+      activeInteraction.type === "resize-access-zone";
+
+    if (definitionInteraction && gardenDefinitionLocked) {
+      interactionRef.current = null;
+      return;
+    }
+
+    if (activeInteraction.type === "move-boundary") {
+      const nextX = cursor.x - activeInteraction.dx;
+      const nextY = cursor.y - activeInteraction.dy;
+      const deltaX = nextX - garden.boundary.x;
+      const deltaY = nextY - garden.boundary.y;
+
+      setGarden((current) => moveGardenDefinition(current, deltaX, deltaY));
+      setPlacements((current) =>
+        current.map((placement) => ({
+          ...placement,
+          x: placement.x + deltaX,
+          y: placement.y + deltaY,
+        })),
+      );
+      return;
+    }
+
+    if (activeInteraction.type === "resize-boundary") {
+      setGarden((current) => ({
+        ...current,
+        boundary: {
+          ...current.boundary,
+          width: Math.max(48, cursor.x - activeInteraction.startX),
+          height: Math.max(48, cursor.y - activeInteraction.startY),
+        },
+      }));
+      return;
+    }
 
     if (activeInteraction.type === "move-bed") {
       const currentBed = garden.beds.find((bed) => bed.id === activeInteraction.id);
@@ -397,24 +685,85 @@ export function App() {
       return;
     }
 
+    if (activeInteraction.type === "move-access-zone") {
+      const currentZone = garden.accessZones.find((zone) => zone.id === activeInteraction.id);
+      if (!currentZone) return;
+
+      const nextZone = {
+        ...currentZone,
+        ...clampRectToBoundary(
+          {
+            ...currentZone,
+            x: cursor.x - activeInteraction.dx,
+            y: cursor.y - activeInteraction.dy,
+          },
+          garden.boundary,
+        ),
+      };
+
+      setGarden((current) => ({
+        ...current,
+        accessZones: current.accessZones.map((zone) => (zone.id === activeInteraction.id ? nextZone : zone)),
+      }));
+      return;
+    }
+
+    if (activeInteraction.type === "resize-access-zone") {
+      const currentZone = garden.accessZones.find((zone) => zone.id === activeInteraction.id);
+      if (!currentZone) return;
+
+      const nextZone = {
+        ...currentZone,
+        ...clampRectToBoundary(
+          {
+            ...currentZone,
+            width: Math.max(24, cursor.x - activeInteraction.startX),
+            height: Math.max(24, cursor.y - activeInteraction.startY),
+          },
+          garden.boundary,
+        ),
+      };
+
+      setGarden((current) => ({
+        ...current,
+        accessZones: current.accessZones.map((zone) => (zone.id === activeInteraction.id ? nextZone : zone)),
+      }));
+      return;
+    }
+
     setPlacements((current) =>
       current.map((placement) => {
         if (placement.id !== activeInteraction.id) return placement;
 
         if (activeInteraction.type === "move-placement") {
-          const bed = garden.beds.find((candidate) => candidate.id === placement.bedId);
-          if (!bed) return placement;
+          const currentBed = garden.beds.find((candidate) => candidate.id === placement.bedId);
+          if (!currentBed) return placement;
+          const candidateX = cursor.x - activeInteraction.dx;
+          const candidateY = cursor.y - activeInteraction.dy;
+          const targetBed =
+            findBedAtPoint(
+              candidateX + placement.width / 2,
+              candidateY + placement.height / 2,
+              garden.beds,
+            ) ?? currentBed;
+          const footprint = getCropFootprint(cropById[placement.cropId], targetBed);
+          const resizedForTargetBed = {
+            ...placement,
+            bedId: targetBed.id,
+            width: footprint.width * placement.columns,
+            height: footprint.height * placement.rows,
+          };
           const nextRect = clampRectToBed(
             {
-              ...placement,
-              x: cursor.x - activeInteraction.dx,
-              y: cursor.y - activeInteraction.dy,
+              ...resizedForTargetBed,
+              x: candidateX,
+              y: candidateY,
             },
-            bed,
+            targetBed,
           );
 
           return {
-            ...placement,
+            ...resizedForTargetBed,
             x: nextRect.x,
             y: nextRect.y,
           };
@@ -468,6 +817,7 @@ export function App() {
   }
 
   function startBedDrag(event: React.PointerEvent<SVGRectElement>, bedId: string) {
+    if (gardenDefinitionLocked) return;
     const svg = event.currentTarget.ownerSVGElement;
     const bed = garden.beds.find((candidate) => candidate.id === bedId);
     if (!svg || !bed) return;
@@ -484,9 +834,13 @@ export function App() {
     };
     event.currentTarget.setPointerCapture(event.pointerId);
     setSelectedBedId(bed.id);
+    setSelectedAccessZoneId("");
+    setSelectedId(null);
+    setActiveSidebarTab("garden");
   }
 
   function startBedResize(event: React.PointerEvent<SVGRectElement>, bedId: string) {
+    if (gardenDefinitionLocked) return;
     const bed = garden.beds.find((candidate) => candidate.id === bedId);
     if (!bed) return;
     event.stopPropagation();
@@ -498,7 +852,89 @@ export function App() {
     };
     event.currentTarget.setPointerCapture(event.pointerId);
     setSelectedBedId(bed.id);
+    setSelectedAccessZoneId("");
+    setSelectedId(null);
+    setActiveSidebarTab("garden");
   }
+
+  function startAccessZoneDrag(event: React.PointerEvent<SVGRectElement>, zoneId: string) {
+    if (gardenDefinitionLocked) return;
+    const svg = event.currentTarget.ownerSVGElement;
+    const zone = garden.accessZones.find((candidate) => candidate.id === zoneId);
+    if (!svg || !zone) return;
+    const point = svg.createSVGPoint();
+    point.x = event.clientX;
+    point.y = event.clientY;
+    const cursor = point.matrixTransform(svg.getScreenCTM()?.inverse());
+
+    interactionRef.current = {
+      type: "move-access-zone",
+      id: zone.id,
+      dx: cursor.x - zone.x,
+      dy: cursor.y - zone.y,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setSelectedAccessZoneId(zone.id);
+    setSelectedBedId("");
+    setSelectedId(null);
+    setActiveSidebarTab("garden");
+  }
+
+  function startAccessZoneResize(event: React.PointerEvent<SVGRectElement>, zoneId: string) {
+    if (gardenDefinitionLocked) return;
+    const zone = garden.accessZones.find((candidate) => candidate.id === zoneId);
+    if (!zone) return;
+    event.stopPropagation();
+    interactionRef.current = {
+      type: "resize-access-zone",
+      id: zone.id,
+      startX: zone.x,
+      startY: zone.y,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setSelectedAccessZoneId(zone.id);
+    setSelectedBedId("");
+    setSelectedId(null);
+    setActiveSidebarTab("garden");
+  }
+
+  const scaleBarMeters = chooseScaleBarMeters(viewBox);
+  const scaleBarWidth = metersToSvgFromScale(scaleBarMeters);
+  const scaleMargin = viewBox.width * 0.035;
+  const scaleTickHeight = viewBox.height * 0.028;
+  const scaleTextSize = viewBox.height * 0.032;
+  const scaleBarX = viewBox.x + viewBox.width - scaleBarWidth - scaleMargin;
+  const scaleBarY = viewBox.y + viewBox.height - scaleMargin;
+  const scaleBarLabel = formatScaleBarLabel(scaleBarMeters);
+  const requestedCropIds = new Set(requests.map((request) => request.cropId));
+  const normalizedCropSearch = cropSearch.trim().toLowerCase();
+  const availableCrops = crops
+    .filter((crop) => !requestedCropIds.has(crop.id))
+    .filter((crop) => crop.smallGardenSuitability !== "poor")
+    .filter((crop) => {
+      if (!normalizedCropSearch) return true;
+
+      return [crop.name, crop.latinName, crop.category, crop.family, ...crop.tags]
+        .join(" ")
+        .toLowerCase()
+        .includes(normalizedCropSearch);
+    })
+    .sort((left, right) => calculateGardenValueScore(right) - calculateGardenValueScore(left));
+  const recommendedCrops = suggestAdditionalCrops(requests, 3);
+  const planScore = analyzePlacements(placements, garden.beds, garden.accessZones);
+  const placementAnalysis = requests.map((request) => {
+    const crop = cropById[request.cropId];
+    const cropPlacements = placements.filter((placement) => placement.cropId === request.cropId);
+    const plantCount = cropPlacements.reduce((total, placement) => total + placement.plantCount, 0);
+    const areaSquareMeters = cropPlacements.reduce(
+      (total, placement) => total + calculatePlacementAreaSquareMeters(placement),
+      0,
+    );
+    const yields = cropPlacements.map(describePlacementYield);
+
+    return { request, crop, cropPlacements, plantCount, areaSquareMeters, yields };
+  });
+  const unplacedRequests = placementAnalysis.filter((analysis) => analysis.cropPlacements.length === 0);
 
   return (
     <main className="app-shell">
@@ -554,26 +990,18 @@ export function App() {
             height={garden.boundary.height}
             rx="6"
             className="garden-boundary"
+            onPointerDown={startBoundaryDrag}
           />
-          {garden.accessZones.map((zone) => (
-            <g key={zone.id} onClick={() => setSelectedAccessZoneId(zone.id)}>
-              <rect
-                x={zone.x}
-                y={zone.y}
-                width={zone.width}
-                height={zone.height}
-                className={
-                  selectedAccessZoneId === zone.id ? "access-zone selected-access-zone" : "access-zone"
-                }
-              />
-              <text x={zone.x + 12} y={zone.y + 24} className="access-label">
-                {zone.name}
-              </text>
-            </g>
-          ))}
-
           {garden.beds.map((bed) => (
-            <g key={bed.id} onClick={() => setSelectedBedId(bed.id)}>
+            <g
+              key={bed.id}
+              onClick={() => {
+                setSelectedBedId(bed.id);
+                setSelectedAccessZoneId("");
+                setSelectedId(null);
+                setActiveSidebarTab("garden");
+              }}
+            >
               <rect
                 x={bed.x}
                 y={bed.y}
@@ -589,7 +1017,7 @@ export function App() {
               <text x={bed.x + 12} y={bed.y + bed.height - 14} className="bed-meta">
                 {getBedLabel(bed)}
               </text>
-              {selectedBedId === bed.id ? (
+              {selectedBedId === bed.id && !gardenDefinitionLocked ? (
                 <rect
                   x={bed.x + bed.width - 10}
                   y={bed.y + bed.height - 10}
@@ -598,6 +1026,51 @@ export function App() {
                   rx="2"
                   className="bed-resize-handle"
                   onPointerDown={(event) => startBedResize(event, bed.id)}
+                />
+              ) : null}
+            </g>
+          ))}
+
+          {garden.accessZones.map((zone) => (
+            <g
+              key={zone.id}
+              onClick={() => {
+                setSelectedAccessZoneId(zone.id);
+                setSelectedBedId("");
+                setSelectedId(null);
+                setActiveSidebarTab("garden");
+              }}
+            >
+              <rect
+                x={zone.x}
+                y={zone.y}
+                width={zone.width}
+                height={zone.height}
+                className={[
+                  "access-zone",
+                  zone.kind === "access" ? "hard-access-zone" : "path-zone",
+                  selectedAccessZoneId === zone.id ? "selected-access-zone" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                onPointerDown={(event) => startAccessZoneDrag(event, zone.id)}
+              />
+              <text
+                x={zone.x + 12}
+                y={zone.y + 24}
+                className={`access-label ${zone.kind === "access" ? "hard-access-label" : "path-label"}`}
+              >
+                {zone.name}
+              </text>
+              {selectedAccessZoneId === zone.id && !gardenDefinitionLocked ? (
+                <rect
+                  x={zone.x + zone.width - 10}
+                  y={zone.y + zone.height - 10}
+                  width="10"
+                  height="10"
+                  rx="2"
+                  className="access-resize-handle"
+                  onPointerDown={(event) => startAccessZoneResize(event, zone.id)}
                 />
               ) : null}
             </g>
@@ -617,7 +1090,12 @@ export function App() {
               <g
                 key={placement.id}
                 className={selected ? "placement selected" : "placement"}
-                onClick={() => setSelectedId(placement.id)}
+                onClick={() => {
+                  setSelectedId(placement.id);
+                  setSelectedBedId("");
+                  setSelectedAccessZoneId("");
+                  setActiveSidebarTab("analysis");
+                }}
               >
                 <rect
                   x={placement.x}
@@ -669,230 +1147,520 @@ export function App() {
               </g>
             );
           })}
+          {!gardenDefinitionLocked ? (
+            <rect
+              x={garden.boundary.x + garden.boundary.width - 12}
+              y={garden.boundary.y + garden.boundary.height - 12}
+              width="12"
+              height="12"
+              rx="2"
+              className="boundary-resize-handle"
+              onPointerDown={startBoundaryResize}
+            />
+          ) : null}
+          <g className="scale-bar" aria-label={`Scale bar ${scaleBarLabel}`}>
+            <line x1={scaleBarX} y1={scaleBarY} x2={scaleBarX + scaleBarWidth} y2={scaleBarY} />
+            <line x1={scaleBarX} y1={scaleBarY - scaleTickHeight} x2={scaleBarX} y2={scaleBarY} />
+            <line
+              x1={scaleBarX + scaleBarWidth}
+              y1={scaleBarY - scaleTickHeight}
+              x2={scaleBarX + scaleBarWidth}
+              y2={scaleBarY}
+            />
+            <text
+              x={scaleBarX + scaleBarWidth / 2}
+              y={scaleBarY - scaleTickHeight - scaleTextSize * 0.35}
+              fontSize={scaleTextSize}
+              className="scale-bar-text"
+            >
+              {scaleBarLabel}
+            </text>
+          </g>
         </svg>
       </section>
 
       <aside className="planner-panel">
-        <section className="panel-section">
-          <h2>Garden definition</h2>
-          <label className="field-label">
-            Garden name
-            <input value={garden.name} onChange={(event) => updateGardenName(event.target.value)} />
-          </label>
-          <div className="definition-grid">
-            <span>Source</span>
-            <strong>{garden.sourceDrawing}</strong>
-            <span>Scale</span>
-            <strong>{garden.scaleDescription}</strong>
-            <span>Beds</span>
-            <strong>{garden.beds.length}</strong>
-            <span>Paths</span>
-            <strong>{garden.accessZones.length}</strong>
-          </div>
-          <div className="button-row">
-            <button className="secondary-action" type="button" onClick={startBlankGarden}>
-              Blank
+        <nav className="sidebar-tabs" aria-label="Sidebar sections">
+          {(["garden", "crops", "analysis"] as const).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              className={activeSidebarTab === tab ? "active" : ""}
+              onClick={() => setActiveSidebarTab(tab)}
+            >
+              {tab === "garden" ? "Garden" : tab === "crops" ? "Crops" : "Analysis"}
             </button>
-            <button className="secondary-action" type="button" onClick={resetGardenDefinition}>
-              Reset
-            </button>
-          </div>
-          <label className="file-button">
-            Import SVG
-            <input
-              type="file"
-              accept=".svg,image/svg+xml"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file) void importGardenFromSvg(file);
-                event.target.value = "";
-              }}
-            />
-          </label>
-          <div className="button-row">
-            <button className="secondary-action" type="button" onClick={addBed}>
-              Add bed
-            </button>
-            <button className="secondary-action" type="button" onClick={addAccessZone}>
-              Add path
-            </button>
-          </div>
-          {selectedBed ? (
-            <div className="selection-card">
-              <label className="field-label">
-                Selected bed
-                <input
-                  value={selectedBed.name}
-                  onChange={(event) => updateSelectedBedName(event.target.value)}
-                />
-              </label>
-              <div className="definition-grid">
-                <span>Size</span>
-                <strong>{getBedLabel(selectedBed)}</strong>
-              </div>
-              <div className="geometry-grid">
-                {(["x", "y", "width", "height"] as const).map((key) => (
-                  <label className="field-label" key={key}>
-                    {key}
-                    <input
-                      type="number"
-                      step="0.1"
-                      value={formatCoordinate(selectedBed[key])}
-                      onChange={(event) => updateSelectedBedGeometry(key, event.currentTarget.valueAsNumber)}
-                    />
-                  </label>
-                ))}
-              </div>
-              <div className="segmented-control" aria-label="Bed sun exposure">
-                <button
-                  type="button"
-                  className={selectedBed.sun === "full" ? "active" : ""}
-                  onClick={() => updateSelectedBedSun("full")}
-                >
-                  Full sun
-                </button>
-                <button
-                  type="button"
-                  className={selectedBed.sun === "partial" ? "active" : ""}
-                  onClick={() => updateSelectedBedSun("partial")}
-                >
-                  Partial
-                </button>
-              </div>
-              <button className="secondary-action" type="button" onClick={deleteSelectedBed}>
-                Delete bed
-              </button>
+          ))}
+        </nav>
+
+        {activeSidebarTab === "garden" ? (
+          <section className="panel-section">
+            <h2>Garden definition</h2>
+            <label className="field-label">
+              Garden name
+              <input
+                value={garden.name}
+                disabled={gardenDefinitionLocked}
+                onChange={(event) => updateGardenName(event.target.value)}
+              />
+            </label>
+            <div className="definition-grid">
+              <span>Source</span>
+              <strong>{garden.sourceDrawing}</strong>
+              <span>Scale</span>
+              <strong>{garden.scaleDescription}</strong>
+              <span>Beds</span>
+              <strong>{garden.beds.length}</strong>
+              <span>Paths</span>
+              <strong>{garden.accessZones.length}</strong>
             </div>
-          ) : null}
-          {selectedAccessZone ? (
+            <button className="lock-definition-button" type="button" onClick={toggleGardenDefinitionLock}>
+              {gardenDefinitionLocked ? <Lock size={18} /> : <LockOpen size={18} />}
+              {gardenDefinitionLocked ? "Garden definition locked" : "Lock garden definition"}
+            </button>
             <div className="selection-card">
-              <label className="field-label">
-                Selected path/access
-                <input
-                  value={selectedAccessZone.name}
-                  onChange={(event) => updateSelectedAccessZoneName(event.target.value)}
-                />
-              </label>
-              <div className="segmented-control" aria-label="Access zone type">
-                <button
-                  type="button"
-                  className={selectedAccessZone.kind === "path" ? "active" : ""}
-                  onClick={() => updateSelectedAccessZoneKind("path")}
-                >
-                  Path
-                </button>
-                <button
-                  type="button"
-                  className={selectedAccessZone.kind === "access" ? "active" : ""}
-                  onClick={() => updateSelectedAccessZoneKind("access")}
-                >
-                  Access
-                </button>
-              </div>
+              <strong>Garden area</strong>
               <div className="geometry-grid">
                 {(["x", "y", "width", "height"] as const).map((key) => (
                   <label className="field-label" key={key}>
-                    {key}
+                    {formatGeometryLabel(key)}
                     <input
                       type="number"
-                      step="0.1"
-                      value={formatCoordinate(selectedAccessZone[key])}
+                      step="0.01"
+                      value={formatMeterCoordinate(garden.boundary[key])}
+                      disabled={gardenDefinitionLocked}
                       onChange={(event) =>
-                        updateSelectedAccessZoneGeometry(key, event.currentTarget.valueAsNumber)
+                        updateGardenBoundaryGeometry(key, event.currentTarget.valueAsNumber)
                       }
                     />
                   </label>
                 ))}
               </div>
-              <button className="secondary-action" type="button" onClick={deleteSelectedAccessZone}>
-                Delete path
-              </button>
             </div>
-          ) : null}
-        </section>
-
-        <section className="panel-section">
-          <div className="section-title">
-            <Sprout size={18} />
-            <h2>Required vegetables</h2>
-          </div>
-          <div className="crop-list">
-            {crops.map((crop) => (
-              <div className="crop-row" key={crop.id}>
-                <span className="crop-swatch" style={{ background: crop.color }} />
-                <div>
-                  <strong>{crop.name}</strong>
-                  <span>
-                    {crop.family} - {describeWater(crop.water)}
-                  </span>
-                  <span>
-                    {crop.spacingCm.inRow} x {crop.spacingCm.betweenRows} cm
-                  </span>
-                </div>
-                <div className="stepper" aria-label={`${crop.name} quantity`}>
-                  <button
-                    type="button"
-                    onClick={() => updateRequest(crop.id, -1)}
-                    aria-label={`Decrease ${crop.name}`}
-                  >
-                    -
-                  </button>
-                  <output>{requests[crop.id]}</output>
-                  <button
-                    type="button"
-                    onClick={() => updateRequest(crop.id, 1)}
-                    aria-label={`Increase ${crop.name}`}
-                  >
-                    +
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-          <button className="primary-action" type="button" onClick={suggestPlan}>
-            <Sparkles size={18} />
-            Suggest layout
-          </button>
-        </section>
-
-        <section className="panel-section details-section">
-          <h2>Selection</h2>
-          {selectedPlacement ? (
-            <div className="selection-card">
-              <div>
-                <strong>{cropById[selectedPlacement.cropId].name}</strong>
-                <span>{getCompanionSummary(selectedPlacement, placements)}</span>
-              </div>
-              <p>
-                Plants in block: {selectedPlacement.plantCount} ({selectedPlacement.columns} x{" "}
-                {selectedPlacement.rows}).
-              </p>
-              <p>
-                Spacing footprint: {cropById[selectedPlacement.cropId].spacingCm.inRow} x{" "}
-                {cropById[selectedPlacement.cropId].spacingCm.betweenRows} cm.
-              </p>
-              <p>{selectedPlacement.reason}</p>
+            <div className="button-row">
+              <button className="primary-action" type="button" onClick={saveGardenDefinition}>
+                Save definition
+              </button>
               <button
                 className="secondary-action"
                 type="button"
-                onClick={() => toggleLock(selectedPlacement.id)}
+                disabled={gardenDefinitionLocked}
+                onClick={startBlankGarden}
               >
-                {selectedPlacement.locked ? <LockOpen size={17} /> : <Lock size={17} />}
-                {selectedPlacement.locked ? "Unlock placement" : "Lock placement"}
+                Blank
               </button>
             </div>
-          ) : (
-            <p className="muted">Select a crop block on the map to review companions and lock it in place.</p>
-          )}
-        </section>
+            <p className="save-status">{gardenSaveStatus}</p>
+            <div className="button-row">
+              <button
+                className="secondary-action"
+                type="button"
+                disabled={gardenDefinitionLocked}
+                onClick={resetGardenDefinition}
+              >
+                Reset
+              </button>
+              <label className={gardenDefinitionLocked ? "file-button disabled" : "file-button"}>
+                Import JSON
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  disabled={gardenDefinitionLocked}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) void importGardenDefinitionFromJson(file);
+                    event.target.value = "";
+                  }}
+                />
+              </label>
+            </div>
+            <label className={gardenDefinitionLocked ? "file-button disabled" : "file-button"}>
+              Import SVG
+              <input
+                type="file"
+                accept=".svg,image/svg+xml"
+                disabled={gardenDefinitionLocked}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) void importGardenFromSvg(file);
+                  event.target.value = "";
+                }}
+              />
+            </label>
+            <div className="button-row">
+              <button
+                className="secondary-action"
+                type="button"
+                disabled={gardenDefinitionLocked}
+                onClick={addBed}
+              >
+                Add bed
+              </button>
+              <button
+                className="secondary-action"
+                type="button"
+                disabled={gardenDefinitionLocked}
+                onClick={addAccessZone}
+              >
+                Add path
+              </button>
+            </div>
+            {selectedBed ? (
+              <div className="selection-card">
+                <label className="field-label">
+                  Selected bed
+                  <input
+                    value={selectedBed.name}
+                    disabled={gardenDefinitionLocked}
+                    onChange={(event) => updateSelectedBedName(event.target.value)}
+                  />
+                </label>
+                <div className="definition-grid">
+                  <span>Size</span>
+                  <strong>{getBedLabel(selectedBed)}</strong>
+                </div>
+                <div className="geometry-grid">
+                  {(["x", "y", "width", "height"] as const).map((key) => (
+                    <label className="field-label" key={key}>
+                      {formatGeometryLabel(key)}
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={formatMeterCoordinate(selectedBed[key])}
+                        disabled={gardenDefinitionLocked}
+                        onChange={(event) =>
+                          updateSelectedBedGeometry(key, event.currentTarget.valueAsNumber)
+                        }
+                      />
+                    </label>
+                  ))}
+                </div>
+                <div className="segmented-control" aria-label="Bed sun exposure">
+                  <button
+                    type="button"
+                    className={selectedBed.sun === "full" ? "active" : ""}
+                    disabled={gardenDefinitionLocked}
+                    onClick={() => updateSelectedBedSun("full")}
+                  >
+                    Full sun
+                  </button>
+                  <button
+                    type="button"
+                    className={selectedBed.sun === "partial" ? "active" : ""}
+                    disabled={gardenDefinitionLocked}
+                    onClick={() => updateSelectedBedSun("partial")}
+                  >
+                    Partial
+                  </button>
+                </div>
+                <button
+                  className="secondary-action"
+                  type="button"
+                  disabled={gardenDefinitionLocked}
+                  onClick={deleteSelectedBed}
+                >
+                  Delete bed
+                </button>
+              </div>
+            ) : null}
+            {selectedAccessZone ? (
+              <div className="selection-card">
+                <label className="field-label">
+                  Selected path/access
+                  <input
+                    value={selectedAccessZone.name}
+                    disabled={gardenDefinitionLocked}
+                    onChange={(event) => updateSelectedAccessZoneName(event.target.value)}
+                  />
+                </label>
+                <div className="segmented-control" aria-label="Access zone type">
+                  <button
+                    type="button"
+                    className={selectedAccessZone.kind === "path" ? "active" : ""}
+                    disabled={gardenDefinitionLocked}
+                    onClick={() => updateSelectedAccessZoneKind("path")}
+                  >
+                    Path
+                  </button>
+                  <button
+                    type="button"
+                    className={selectedAccessZone.kind === "access" ? "active" : ""}
+                    disabled={gardenDefinitionLocked}
+                    onClick={() => updateSelectedAccessZoneKind("access")}
+                  >
+                    Access
+                  </button>
+                </div>
+                <div className="geometry-grid">
+                  {(["x", "y", "width", "height"] as const).map((key) => (
+                    <label className="field-label" key={key}>
+                      {formatGeometryLabel(key)}
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={formatMeterCoordinate(selectedAccessZone[key])}
+                        disabled={gardenDefinitionLocked}
+                        onChange={(event) =>
+                          updateSelectedAccessZoneGeometry(key, event.currentTarget.valueAsNumber)
+                        }
+                      />
+                    </label>
+                  ))}
+                </div>
+                <button
+                  className="secondary-action"
+                  type="button"
+                  disabled={gardenDefinitionLocked}
+                  onClick={deleteSelectedAccessZone}
+                >
+                  Delete path
+                </button>
+              </div>
+            ) : null}
+          </section>
+        ) : null}
 
-        <section className="panel-section">
-          <h2>Plan controls</h2>
-          <button className="secondary-action" type="button" onClick={resetPlan}>
-            <RotateCcw size={17} />
-            Reset draft
-          </button>
-        </section>
+        {activeSidebarTab === "crops" ? (
+          <section className="panel-section">
+            <div className="section-title">
+              <Sprout size={18} />
+              <h2>Required vegetables</h2>
+            </div>
+            {requests.length > 0 ? (
+              <div className="crop-list">
+                {requests.map((request) => {
+                  const crop = cropById[request.cropId];
+                  const gardenValueScore = calculateGardenValueScore(crop);
+
+                  return (
+                    <div className="crop-row selected-crop-row" key={crop.id}>
+                      <span className="crop-swatch" style={{ background: crop.color }} />
+                      <div>
+                        <strong>{crop.name}</strong>
+                        <span>
+                          {crop.category} - {describeWater(crop.water)}
+                        </span>
+                        <span>
+                          {describeGardenValue(gardenValueScore)} - starter yield{" "}
+                          {describeYieldEstimate(crop)}
+                        </span>
+                      </div>
+                      <div className="crop-controls">
+                        <select
+                          aria-label={`${crop.name} priority`}
+                          value={request.priority}
+                          onChange={(event) =>
+                            updateRequestPriority(
+                              crop.id,
+                              event.currentTarget.value as CropRequest["priority"],
+                            )
+                          }
+                        >
+                          <option value="must">Must have</option>
+                          <option value="nice">Nice</option>
+                          <option value="optional">Optional</option>
+                        </select>
+                        <select
+                          aria-label={`${crop.name} amount intent`}
+                          value={request.intent}
+                          onChange={(event) =>
+                            updateRequestIntent(crop.id, event.currentTarget.value as CropRequest["intent"])
+                          }
+                        >
+                          <option value="some">{describeCropIntent("some")}</option>
+                          <option value="normal">{describeCropIntent("normal")}</option>
+                          <option value="lots">{describeCropIntent("lots")}</option>
+                        </select>
+                        <button
+                          className="icon-action"
+                          type="button"
+                          onClick={() => removeCropRequest(crop.id)}
+                          aria-label={`Remove ${crop.name}`}
+                          title={`Remove ${crop.name}`}
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="muted">Add crops to define what the garden must produce this season.</p>
+            )}
+            <button
+              className="secondary-action"
+              type="button"
+              onClick={() => setCropPickerOpen((open) => !open)}
+            >
+              Add crop
+            </button>
+            {cropPickerOpen ? (
+              <div className="crop-picker">
+                <label className="field-label">
+                  Search catalog
+                  <input
+                    value={cropSearch}
+                    onChange={(event) => setCropSearch(event.target.value)}
+                    placeholder="Tomato, herb, quick, high-value..."
+                  />
+                </label>
+                <div className="crop-list">
+                  {availableCrops.slice(0, 8).map((crop) => {
+                    const gardenValueScore = calculateGardenValueScore(crop);
+
+                    return (
+                      <button
+                        className="crop-option"
+                        type="button"
+                        key={crop.id}
+                        onClick={() => addCropRequest(crop.id)}
+                      >
+                        <span className="crop-swatch" style={{ background: crop.color }} />
+                        <span>
+                          <strong>{crop.name}</strong>
+                          <span>
+                            {describeGardenValue(gardenValueScore)} - {crop.smallGardenSuitability} small
+                            garden fit
+                          </span>
+                          <span>{describeYieldEstimate(crop)}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+            {recommendedCrops.length > 0 ? (
+              <div className="recommendation-list">
+                <strong>Potential additions</strong>
+                {recommendedCrops.map((suggestion) => (
+                  <button
+                    className="recommendation-row"
+                    type="button"
+                    key={suggestion.crop.id}
+                    onClick={() => addCropRequest(suggestion.crop.id)}
+                  >
+                    <span className="crop-swatch" style={{ background: suggestion.crop.color }} />
+                    <span>
+                      <strong>{suggestion.crop.name}</strong>
+                      <span>{suggestion.reasons.slice(0, 2).join(" - ")}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            <button className="primary-action" type="button" onClick={suggestPlan}>
+              <Sparkles size={18} />
+              Suggest layout
+            </button>
+          </section>
+        ) : null}
+
+        {activeSidebarTab === "analysis" ? (
+          <>
+            <section className="panel-section">
+              <h2>Placement analysis</h2>
+              {placements.length > 0 ? (
+                <>
+                  <div className="score-summary">
+                    <strong>{planScore.score}</strong>
+                    <span>Layout score</span>
+                  </div>
+                  <div className="analysis-list">
+                    {placementAnalysis.map((analysis) => (
+                      <div className="analysis-row" key={analysis.crop.id}>
+                        <span className="crop-swatch" style={{ background: analysis.crop.color }} />
+                        <div>
+                          <strong>{analysis.crop.name}</strong>
+                          <span>
+                            {analysis.plantCount} plant{analysis.plantCount === 1 ? "" : "s"} placed -{" "}
+                            {formatYieldAmount(analysis.areaSquareMeters)} m2
+                          </span>
+                          <span>
+                            {analysis.yields.length > 0
+                              ? `Projected yield: ${analysis.yields.join(" + ")}`
+                              : "Not placed"}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                    {unplacedRequests.length > 0 ? (
+                      <p className="muted">
+                        Not placed yet: {unplacedRequests.map((analysis) => analysis.crop.name).join(", ")}.
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="finding-list">
+                    <strong>Findings</strong>
+                    {planScore.findings.slice(0, 8).map((finding, index) => (
+                      <div className={`finding-row ${finding.level}`} key={`${finding.message}-${index}`}>
+                        <span>{finding.level}</span>
+                        <p>{finding.message}</p>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <p className="muted">Place or suggest crops to calculate plant counts and projected yield.</p>
+              )}
+            </section>
+
+            <section className="panel-section details-section">
+              <h2>Selection</h2>
+              {selectedPlacement ? (
+                <div className="selection-card">
+                  <div>
+                    <strong>{cropById[selectedPlacement.cropId].name}</strong>
+                    <span>{getCompanionSummary(selectedPlacement, placements)}</span>
+                  </div>
+                  {planScore.placements.find((score) => score.placementId === selectedPlacement.id) ? (
+                    <div className="finding-list compact">
+                      {planScore.placements
+                        .find((score) => score.placementId === selectedPlacement.id)!
+                        .findings.map((finding, index) => (
+                          <div className={`finding-row ${finding.level}`} key={`${finding.message}-${index}`}>
+                            <span>{finding.level}</span>
+                            <p>{finding.message}</p>
+                          </div>
+                        ))}
+                    </div>
+                  ) : null}
+                  <p>
+                    Plants in block: {selectedPlacement.plantCount} ({selectedPlacement.columns} x{" "}
+                    {selectedPlacement.rows}).
+                  </p>
+                  <p>
+                    Spacing footprint: {cropById[selectedPlacement.cropId].spacingCm.inRow} x{" "}
+                    {cropById[selectedPlacement.cropId].spacingCm.betweenRows} cm.
+                  </p>
+                  <p>Projected yield from this block: {describePlacementYield(selectedPlacement)}.</p>
+                  <p>{selectedPlacement.reason}</p>
+                  <button
+                    className="secondary-action"
+                    type="button"
+                    onClick={() => toggleLock(selectedPlacement.id)}
+                  >
+                    {selectedPlacement.locked ? <LockOpen size={17} /> : <Lock size={17} />}
+                    {selectedPlacement.locked ? "Unlock placement" : "Lock placement"}
+                  </button>
+                </div>
+              ) : (
+                <p className="muted">
+                  Select a crop block on the map to review companions and lock it in place.
+                </p>
+              )}
+            </section>
+
+            <section className="panel-section">
+              <h2>Plan controls</h2>
+              <button className="secondary-action" type="button" onClick={resetPlan}>
+                <RotateCcw size={17} />
+                Reset draft
+              </button>
+            </section>
+          </>
+        ) : null}
       </aside>
     </main>
   );

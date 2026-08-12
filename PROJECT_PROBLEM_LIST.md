@@ -13,7 +13,7 @@ Status values:
 
 ### P0-001: Garden Geometry Must Become Explicit Data
 
-Status: Done
+Status: In progress
 
 Problem:
 The current app uses geometry copied from `favargemap.svg` into TypeScript constants. That is enough for the first prototype, but the measured garden should become structured garden data with dimensions, beds, access zones, and coordinate scaling.
@@ -55,7 +55,7 @@ The starter crop catalog now includes in-row and between-row spacing in centimet
 
 ### P0-003: Manual Placements Can Leave Beds
 
-Status: In progress
+Status: Done
 
 Problem:
 Crop blocks can currently be dragged around the full map bounds. They should snap to or remain inside valid bed areas unless the user intentionally moves them elsewhere.
@@ -71,11 +71,11 @@ Acceptance criteria:
 - Tests cover placement validity checks.
 
 Resolution:
-Crop block movement and resizing are constrained to the assigned bed. The current implementation prevents invalid placement through clamping rather than allowing invalid placements and warning afterward.
+Crop block resizing is constrained to the assigned bed. Crop block movement can cross between beds; the block is assigned to the bed under its center while dragging and clamped to a valid bed when needed.
 
 ### P0-004: Suggestions Need Explainable Scoring
 
-Status: Open
+Status: Done
 
 Problem:
 The current suggestion engine picks the first compatible bed. It needs a transparent score based on sun, spacing, companions, conflicts, water need, and locked placements.
@@ -91,11 +91,14 @@ Acceptance criteria:
 - Locked placements are respected.
 - Tests cover scoring changes for companion and conflict cases.
 
+Progress:
+Added first-pass placement analysis scores and findings. The app now reports sun mismatch warnings, bad companion conflicts, good companion matches, and crop overlap with hard access or soft path zones. Next step is using these findings to propose better alternatives, not only report issues.
+
 ## P1 - User Experience
 
 ### P1-001: Garden Map Needs Pan, Zoom, and Better Selection
 
-Status: Open
+Status: In progress
 
 Problem:
 The map is currently static except for crop dragging. The user needs map navigation and clearer selection behavior as the plan becomes more complex.
@@ -108,11 +111,28 @@ Acceptance criteria:
 - Mobile layout remains usable.
 
 Progress:
-Basic pan, zoom, reset controls, bed selection, direct bed move/resize, garden-definition editing, blank garden creation, and SVG import are implemented. Mobile interaction still needs refinement.
+Basic pan, zoom, reset controls, bed selection, direct bed move/resize, garden boundary move/resize, scale bar, garden-definition editing, blank garden creation, SVG import, and garden-definition JSON save/restore are implemented. Mobile interaction still needs refinement.
+
+### P1-007: Path And Access Zones Need Direct Map Editing
+
+Status: Open
+
+Problem:
+Beds can be moved and resized directly on the map, but path/access zones still require numeric geometry editing in the sidebar.
+
+Acceptance criteria:
+
+- User can move a path/access zone directly on the map.
+- User can resize a path/access zone directly on the map.
+- Edited path/access zones remain inside the garden boundary.
+- Tests cover access-zone geometry clamping.
+
+Resolution:
+Path/access zones can be selected, dragged, and resized directly on the map. Pointer edits and numeric edits share the same garden-boundary clamping behavior. Hard `access` zones and soft in-bed `path` zones now render above beds with different colors.
 
 ### P1-002: Crop Request UI Needs Better Inputs
 
-Status: Open
+Status: Done
 
 Problem:
 The current plus/minus crop quantity UI is a prototype. It does not capture variety, count vs area, planting windows, or priority.
@@ -123,6 +143,9 @@ Acceptance criteria:
 - User can choose plant count or area target.
 - UI can handle more crops without becoming noisy.
 - Requests can be saved and restored.
+
+Resolution:
+The fixed plus/minus list was replaced with selected crop requests, an Add Crop picker, crop priority, rough amount intent, and placement analysis. Actual plant counts now come from placed block sizes instead of request quantities. Named plan/version persistence remains tracked separately in P1-003.
 
 ### P1-003: Local Persistence Needs Plan Versions
 
@@ -145,17 +168,19 @@ Acceptance criteria:
 Status: Open
 
 Problem:
-The crop catalog is currently hand-written seed data. It needs reliable values for spacing, families, water needs, sun needs, planting windows, and companion rules.
+The crop catalog is currently hand-written starter data. It needs reliable values for spacing, families, water needs, sun needs, planting windows, projected yield, garden value factors, rarity, and companion rules.
 
 Acceptance criteria:
 
 - Catalog has source notes for each domain field.
 - At least 20 common vegetables are included.
+- Projected yield estimates have source notes.
+- Garden value factors can be reviewed and overridden by the user.
 - Companion rules distinguish strong evidence, common practice, and weak anecdote.
 - Tests validate required fields are present for every crop.
 
 Progress:
-The crop schema now includes `spacingSource` notes. The current values are local starter data; a sourceable catalog import workflow remains open.
+The crop catalog is now a dedicated module with selected-crop requests, projected yield estimates, small-garden suitability, Swiss suitability, garden value factors including rarity, and first-pass additional crop suggestions. The current values are local starter estimates; a sourceable catalog import/verification workflow remains open.
 
 ### P1-005: Companion Planting Rules Need Confidence Levels
 
@@ -169,6 +194,21 @@ Acceptance criteria:
 - Companion rules include a confidence level.
 - UI explains the reason for each companion recommendation.
 - Bad companion warnings are separated from soft suggestions.
+
+### P1-008: Interplanting Must Be Explicit, Not Generic Overlap
+
+Status: Open
+
+Problem:
+Some companions, such as basil between tomato plants, should be allowed to share space. Arbitrary block overlap would make the plan invalid, so overlap needs to be modeled as intentional interplanting.
+
+Acceptance criteria:
+
+- Placement mode supports `standalone`, `interplant`, and `border`.
+- Interplant placements reference a host placement.
+- Companion rules can explicitly allow or disallow interplanting.
+- Interplanting checks individual plant positions and minimum clearance.
+- UI distinguishes interplanted crops from ordinary overlapping blocks.
 
 ### P1-006: MeteoSwiss Data Access Needs Adapter Design
 

@@ -15,6 +15,7 @@ venv/
 node_modules/
 dist/
 *.local
+vite-dev*.log
 
 # OS / editor
 .DS_Store

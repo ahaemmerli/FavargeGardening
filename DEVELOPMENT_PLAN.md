@@ -11,10 +11,10 @@ Favarge Gardening is a garden planning app for Switzerland-based growing seasons
    - Define beds, paths, borders, fixed objects, shade zones, water access, and usable planting areas.
    - Store garden dimensions in real units.
 
-2. Request vegetables
-   - Select required vegetables and quantities.
+2. Select crop candidates
+   - Select required vegetables without forcing an upfront plant count.
+   - Set intent and priority such as must-have, nice-to-have, optional, some, normal, or lots.
    - Optionally set constraints such as preferred varieties, expected household consumption, planting dates, and organic methods.
-   - Let the app estimate required area and number of plants.
 
 3. Generate a planting proposal
    - Suggest bed locations based on space, sun, crop family, companion rules, watering needs, rotation history, and spacing.
@@ -24,6 +24,7 @@ Favarge Gardening is a garden planning app for Switzerland-based growing seasons
 4. Edit and lock the plan
    - Drag plants or blocks on the garden map.
    - Resize planting zones where appropriate.
+   - Derive plant count and projected yield from actual placed block size.
    - Lock confirmed placements so later suggestions work around them.
    - Save plan versions by season and year.
 
@@ -31,11 +32,13 @@ Favarge Gardening is a garden planning app for Switzerland-based growing seasons
    - Suggest good companions near selected crops.
    - Warn about poor companions.
    - Explain the reason: pests, nutrients, growth habit, shade, pollination, or harvest timing.
+   - Support rule-based interplanting where companion crops can share a block only when their plant positions fit within the host crop spacing.
 
 6. In-season care
    - Show watering needs per plant or bed.
-   - Use MeteoSwiss data for temperature, precipitation, sunlight / radiation, and local forecasts.
+   - Use MeteoSwiss data for temperature, precipitation, sunlight / radiation, and local forecasts, and season temperature statistics.
    - Convert weather and crop data into practical watering recommendations.
+   - Convert weather statistics and local forecast into real-time planting dates recommendation
    - Track completed watering and garden tasks.
 
 7. Rotation planning
@@ -100,6 +103,7 @@ Garden:
 - unit
 - boundary polygon
 - beds
+- access zones
 - fixed objects
 - sun zones
 - water points
@@ -112,6 +116,15 @@ Bed:
 - soil notes
 - sun exposure
 - usable area
+
+Access Zone:
+
+- id
+- name
+- kind: `access` or `path`
+- geometry
+- `access`: hard/permanent non-growing material access to the garden, outside the bed growing system
+- `path`: soft in-bed crop access made from wood chips, grass cuttings, or similar material; crop-free by default but still part of the bed layout
 
 Crop:
 
@@ -135,6 +148,8 @@ Placement:
 - bed id
 - geometry
 - plant count
+- placement mode: standalone, interplant, border
+- optional host placement id
 - locked
 - season
 - year
@@ -259,38 +274,62 @@ Deferred setup items:
 
 - Decide whether to mirror the problem list into GitHub Issues.
 
-### Phase 1: Garden Map Foundation - In Progress
+### Phase 1: Garden Map Foundation - Complete
 
 - Done: Built a measured 2D garden canvas from the user's SVG drawing.
 - Done: Added structured garden geometry for beds, access zones, boundary, and real-world bed dimensions.
 - Done: Added 50x drawing-scale conversion helpers and tests.
+- Done: Added editable garden boundary geometry with direct move/resize controls and meter-based sidebar numeric inputs.
+- Done: Added a bottom-right real-world scale bar on the map.
 - Done: Added basic pan, zoom, and reset controls.
 - Done: Added garden geometry unit tests.
 - Done: Added persisted garden definition editing for garden name, bed names, and bed sun exposure.
-- Done: Constrained manual placement dragging and resizing to valid beds.
+- Done: Constrained crop resizing to valid beds and allowed crop dragging between beds.
 - Done: Added path/access-zone selection and persisted naming/type metadata.
+- Done: Clarified `access` as hard/permanent non-growing access and `path` as soft in-bed crop access.
 - Done: Added manual garden-definition editing from scratch.
 - Done: Added SVG file import for beds and path/access zones.
+- Done: Added JSON save/export and restore/import for garden definitions.
+- Done: Clamped manual bed/path coordinate edits inside the garden boundary so objects cannot be lost off-map.
+- Done: Added a persistent garden-definition lock to prevent accidental boundary, bed, or path edits while placing crops.
 - Done: Beds can be moved and resized directly on the map.
-- Remaining: Add richer visual bed/path drawing tools.
-- Remaining: Add a reference-layer workflow for future drawing updates.
+- Done: Path/access zones can be moved and resized directly on the map.
+- Done: Paths/access zones render above beds and use different colors by kind.
+- Deferred polish: Add a visible reference-layer workflow for imported drawings.
+- Deferred polish: Add visual validation warnings for invalid or suspicious garden definitions.
+- Optional later: Add polygon/freeform drawing tools beyond rectangles.
 - Note: The SVG scale is 1 drawing mm = 50 real mm. The corrected drawing derives the three right beds to 5 m x 1.25 m and the lower-left bed to 3 m x 1 m.
 
 ### Phase 2: Crop Catalog
 
-- In progress: Add seed crop data for common vegetables.
-- In progress: Define spacing, family, water need, sun need, and companion rules.
+- Done: Moved crop data into a dedicated crop catalog module.
+- Done: Added starter crop data for common small-garden vegetables.
+- Done: Defined spacing, family, water need, sun need, companion rules, and avoid rules.
+- Done: Added projected yield estimates.
+- Done: Added garden value factors including flavor gain, freshness, market price, availability, rarity, space efficiency, and storage value.
+- Done: Added selected-crop request objects with priority instead of a fixed zero-filled crop list.
+- Done: Added an Add Crop picker filtered toward small-garden-suitable crops.
+- Done: Added first-pass recommended additional crops based on garden value, small-garden fit, and companion matches.
+- Done: Changed crop requests to crop intent instead of plant quantity, making map placement area the source of truth for plant counts.
+- Done: Added first-pass placement analysis with actual placed plants, area, and projected yield.
+- Done: Added Garden, Crops, and Analysis sidebar tabs to avoid one long mixed workflow panel.
 - Done: Crop placement rectangle sizes now derive from spacing requirements in centimeters.
 - Done: Small crops can be grouped into multi-plant blocks.
 - Done: Resizing a crop block updates its row/column grid and plant count.
-- Build crop selection UI.
+- Remaining: Add stronger crop data source/verification workflow.
+- Remaining: Improve crop picker filters for season, Swiss/local suitability, crop category, and user preferences.
+- Remaining: Let the user override practical garden value for crops they simply want to grow.
+- Remaining: Improve analysis warnings and suggestions from actual placed area, unused space, and path/access conflicts.
 
 ### Phase 3: Placement Planner
 
-- Implement rule-based scoring.
-- Generate initial vegetable placements.
-- Explain why each crop was placed.
-- Detect spacing and companion conflicts.
+- Done: Added first-pass rule-based placement scoring.
+- Done: Generate initial vegetable placements.
+- Done: Explain why each crop was placed.
+- Done: Detect sun mismatch, bad companions, good companions, and crop overlap with path/access zones.
+- In progress: Turn analysis findings into stronger layout suggestions and automatic alternatives.
+- Remaining: Detect spacing conflicts between independent crop blocks.
+- Add explicit interplanting rules so companion crops can overlap only when allowed and when individual plant positions fit.
 
 ### Phase 4: Manual Editing
 
@@ -304,6 +343,7 @@ Deferred setup items:
 - Add companion suggestions around selected crops.
 - Show positive and negative companion relationships.
 - Support optional companion crops.
+- Support interplanting modes such as basil inside tomato spacing and border plantings where rules allow them.
 
 ### Phase 6: Weather-Aware Watering
 

@@ -1,26 +1,9 @@
 import { beds, centimetersToSvgHeight, centimetersToSvgWidth, type AccessZone, type Bed } from "./garden";
-
-export type CropId = "tomato" | "basil" | "carrot" | "lettuce" | "bean" | "cabbage";
-
-export type Crop = {
-  id: CropId;
-  name: string;
-  family: string;
-  water: "low" | "medium" | "high";
-  sun: "partial" | "full";
-  color: string;
-  spacingCm: {
-    inRow: number;
-    betweenRows: number;
-  };
-  spacingSource: string;
-  companions: CropId[];
-  avoid: CropId[];
-};
+import { cropById, type Crop, type CropId, type CropRequest } from "./cropCatalog";
 
 export type { AccessZone, Bed };
-
-export type CropRequest = Record<CropId, number>;
+export { cropById } from "./cropCatalog";
+export type { Crop, CropId, CropRequest } from "./cropCatalog";
 
 export type Placement = {
   id: string;
@@ -37,85 +20,34 @@ export type Placement = {
   reason: string;
 };
 
-export const crops: Crop[] = [
-  {
-    id: "tomato",
-    name: "Tomato",
-    family: "Nightshade",
-    water: "high",
-    sun: "full",
-    color: "#d94f38",
-    spacingCm: { inRow: 60, betweenRows: 60 },
-    spacingSource: "Starter catalog: NC State intensive tomato spacing rounded to 60 cm.",
-    companions: ["basil", "carrot", "lettuce"],
-    avoid: ["cabbage"],
-  },
-  {
-    id: "basil",
-    name: "Basil",
-    family: "Mint",
-    water: "medium",
-    sun: "full",
-    color: "#3f9b58",
-    spacingCm: { inRow: 25, betweenRows: 25 },
-    spacingSource: "Starter catalog: herb spacing placeholder, to verify against seed data.",
-    companions: ["tomato"],
-    avoid: [],
-  },
-  {
-    id: "carrot",
-    name: "Carrot",
-    family: "Umbellifer",
-    water: "medium",
-    sun: "full",
-    color: "#e58935",
-    spacingCm: { inRow: 10, betweenRows: 30 },
-    spacingSource: "Starter catalog: RHS carrot spacing.",
-    companions: ["tomato", "lettuce", "bean"],
-    avoid: [],
-  },
-  {
-    id: "lettuce",
-    name: "Lettuce",
-    family: "Aster",
-    water: "high",
-    sun: "partial",
-    color: "#78b74a",
-    spacingCm: { inRow: 25, betweenRows: 30 },
-    spacingSource: "Starter catalog: RHS raised-bed lettuce spacing.",
-    companions: ["carrot", "tomato"],
-    avoid: [],
-  },
-  {
-    id: "bean",
-    name: "Bean",
-    family: "Legume",
-    water: "medium",
-    sun: "full",
-    color: "#2f8f7c",
-    spacingCm: { inRow: 10, betweenRows: 45 },
-    spacingSource: "Starter catalog: RHS French bean spacing.",
-    companions: ["carrot", "cabbage"],
-    avoid: [],
-  },
-  {
-    id: "cabbage",
-    name: "Cabbage",
-    family: "Brassica",
-    water: "high",
-    sun: "full",
-    color: "#6b8f42",
-    spacingCm: { inRow: 45, betweenRows: 45 },
-    spacingSource: "Starter catalog: CSU cabbage spacing rounded from 18 inches.",
-    companions: ["bean"],
-    avoid: ["tomato"],
-  },
-];
+export type PlacementFinding = {
+  level: "good" | "warning" | "error";
+  message: string;
+};
 
-export const cropById = Object.fromEntries(crops.map((crop) => [crop.id, crop])) as Record<CropId, Crop>;
+export type PlacementScore = {
+  placementId: string;
+  score: number;
+  findings: PlacementFinding[];
+};
 
-export function describeWater(water: Crop["water"]) {
-  return water === "high" ? "High water" : water === "medium" ? "Moderate water" : "Low water";
+export type PlanScore = {
+  score: number;
+  placements: PlacementScore[];
+  findings: PlacementFinding[];
+};
+
+function rectsOverlap(left: Placement, right: Placement | AccessZone) {
+  return (
+    left.x < right.x + right.width &&
+    left.x + left.width > right.x &&
+    left.y < right.y + right.height &&
+    left.y + left.height > right.y
+  );
+}
+
+function clampScore(score: number) {
+  return Math.max(0, Math.min(100, score));
 }
 
 export function getCropFootprint(crop: Crop, bed: Bed) {
@@ -129,6 +61,13 @@ export function getDefaultPlantsPerBlock(crop: Crop) {
   if (crop.spacingCm.inRow <= 12) return 12;
   if (crop.spacingCm.inRow <= 25) return 4;
   return 1;
+}
+
+export function getStarterPlantsForIntent(crop: Crop, intent: CropRequest["intent"]) {
+  const defaultPlants = getDefaultPlantsPerBlock(crop);
+  if (intent === "some") return Math.max(1, Math.ceil(defaultPlants / 2));
+  if (intent === "lots") return defaultPlants * 2;
+  return defaultPlants;
 }
 
 export function getBlockLayout(crop: Crop, bed: Bed, plantCount: number) {
@@ -175,8 +114,105 @@ export function getCompanionSummary(placement: Placement, placements: Placement[
   return "No companion conflict";
 }
 
+export function analyzePlacements(
+  placements: Placement[],
+  gardenBeds = beds,
+  accessZones: AccessZone[] = [],
+): PlanScore {
+  const placementScores = placements.map((placement): PlacementScore => {
+    const crop = cropById[placement.cropId];
+    const bed = gardenBeds.find((candidate) => candidate.id === placement.bedId);
+    const findings: PlacementFinding[] = [];
+    let score = 100;
+
+    if (!bed) {
+      findings.push({ level: "error", message: "Placement is assigned to a missing bed." });
+      score -= 45;
+    } else {
+      const insideBed =
+        placement.x >= bed.x &&
+        placement.y >= bed.y &&
+        placement.x + placement.width <= bed.x + bed.width &&
+        placement.y + placement.height <= bed.y + bed.height;
+
+      if (!insideBed) {
+        findings.push({ level: "error", message: "Placement extends outside its bed." });
+        score -= 35;
+      }
+
+      if (bed.sun !== crop.sun) {
+        findings.push({
+          level: "warning",
+          message: `${crop.name} prefers ${crop.sun} sun; ${bed.name} is marked ${bed.sun}.`,
+        });
+        score -= 18;
+      }
+    }
+
+    const overlappingZones = accessZones.filter((zone) => rectsOverlap(placement, zone));
+    for (const zone of overlappingZones) {
+      findings.push({
+        level: "error",
+        message:
+          zone.kind === "path"
+            ? `Overlaps soft crop path "${zone.name}".`
+            : `Overlaps hard access "${zone.name}".`,
+      });
+      score -= zone.kind === "path" ? 18 : 30;
+    }
+
+    const neighbors = placements.filter(
+      (other) => other.id !== placement.id && other.bedId === placement.bedId,
+    );
+    const goodCompanions = neighbors.filter((neighbor) => crop.companions.includes(neighbor.cropId));
+    const badCompanions = neighbors.filter((neighbor) => crop.avoid.includes(neighbor.cropId));
+
+    if (badCompanions.length > 0) {
+      findings.push({
+        level: "error",
+        message: `Avoid near ${badCompanions.map((neighbor) => cropById[neighbor.cropId].name).join(", ")}.`,
+      });
+      score -= 28;
+    }
+
+    if (goodCompanions.length > 0) {
+      findings.push({
+        level: "good",
+        message: `Good companion near ${goodCompanions
+          .map((neighbor) => cropById[neighbor.cropId].name)
+          .join(", ")}.`,
+      });
+      score += 8;
+    }
+
+    if (findings.length === 0) {
+      findings.push({ level: "good", message: "No placement issues detected." });
+    }
+
+    return {
+      placementId: placement.id,
+      score: clampScore(score),
+      findings,
+    };
+  });
+  const allFindings = placementScores.flatMap((placementScore) => placementScore.findings);
+  const score =
+    placementScores.length > 0
+      ? Math.round(
+          placementScores.reduce((total, placementScore) => total + placementScore.score, 0) /
+            placementScores.length,
+        )
+      : 100;
+
+  return {
+    score,
+    placements: placementScores,
+    findings: allFindings,
+  };
+}
+
 export function createSuggestions(
-  requests: CropRequest,
+  requests: CropRequest[],
   existing: Placement[],
   idSeed = Date.now(),
   gardenBeds = beds,
@@ -192,62 +228,52 @@ export function createSuggestions(
     bedOffsets.set(placement.bedId, count + 1);
   }
 
-  for (const [cropId, count] of Object.entries(requests) as [CropId, number][]) {
-    if (count <= 0) continue;
-
+  for (const request of requests) {
+    const { cropId } = request;
     const crop = cropById[cropId];
-    const alreadyLocked = locked.filter((placement) => placement.cropId === cropId).length;
-    const lockedPlantCount = locked
-      .filter((placement) => placement.cropId === cropId)
-      .reduce((total, placement) => total + placement.plantCount, 0);
-    let missingPlants = Math.max(0, count - Math.max(alreadyLocked, lockedPlantCount));
-    let blockIndex = 0;
+    if (locked.some((placement) => placement.cropId === cropId)) continue;
 
-    while (missingPlants > 0) {
-      const preferredBed =
-        gardenBeds.find(
-          (bed) =>
-            bed.sun === crop.sun &&
-            !suggestions.some(
-              (placement) => crop.avoid.includes(placement.cropId) && placement.bedId === bed.id,
-            ),
-        ) ??
-        gardenBeds.find(
-          (bed) =>
-            !suggestions.some(
-              (placement) => crop.avoid.includes(placement.cropId) && placement.bedId === bed.id,
-            ),
-        ) ??
-        gardenBeds[0];
+    const preferredBed =
+      gardenBeds.find(
+        (bed) =>
+          bed.sun === crop.sun &&
+          !suggestions.some(
+            (placement) => crop.avoid.includes(placement.cropId) && placement.bedId === bed.id,
+          ),
+      ) ??
+      gardenBeds.find(
+        (bed) =>
+          !suggestions.some(
+            (placement) => crop.avoid.includes(placement.cropId) && placement.bedId === bed.id,
+          ),
+      ) ??
+      gardenBeds[0];
 
-      const plantCount = Math.min(missingPlants, getDefaultPlantsPerBlock(crop));
-      const offset = bedOffsets.get(preferredBed.id) ?? 0;
-      const layout = getBlockLayout(crop, preferredBed, plantCount);
-      const width = layout.width;
-      const height = layout.height;
-      const gap = 8;
-      const columns = Math.max(1, Math.floor((preferredBed.width - 28 + gap) / (width + gap)));
-      const column = offset % columns;
-      const row = Math.floor(offset / columns);
+    const plantCount = getStarterPlantsForIntent(crop, request.intent);
+    const offset = bedOffsets.get(preferredBed.id) ?? 0;
+    const layout = getBlockLayout(crop, preferredBed, plantCount);
+    const width = layout.width;
+    const height = layout.height;
+    const gap = 8;
+    const columns = Math.max(1, Math.floor((preferredBed.width - 28 + gap) / (width + gap)));
+    const column = offset % columns;
+    const row = Math.floor(offset / columns);
 
-      bedOffsets.set(preferredBed.id, offset + 1);
-      suggestions.push({
-        id: `${cropId}-${idSeed}-${blockIndex}`,
-        cropId,
-        bedId: preferredBed.id,
-        plantCount,
-        columns: layout.columns,
-        rows: layout.rows,
-        x: preferredBed.x + 14 + column * (width + gap),
-        y: preferredBed.y + 14 + row * (height + gap),
-        width,
-        height,
-        locked: false,
-        reason: `${preferredBed.name} matches ${crop.sun} sun and places ${plantCount} plant${plantCount === 1 ? "" : "s"} at ${crop.spacingCm.inRow} x ${crop.spacingCm.betweenRows} cm spacing.`,
-      });
-      missingPlants -= plantCount;
-      blockIndex += 1;
-    }
+    bedOffsets.set(preferredBed.id, offset + 1);
+    suggestions.push({
+      id: `${cropId}-${idSeed}-0`,
+      cropId,
+      bedId: preferredBed.id,
+      plantCount,
+      columns: layout.columns,
+      rows: layout.rows,
+      x: preferredBed.x + 14 + column * (width + gap),
+      y: preferredBed.y + 14 + row * (height + gap),
+      width,
+      height,
+      locked: false,
+      reason: `${preferredBed.name} matches ${crop.sun} sun and starts a ${request.intent} ${crop.name.toLowerCase()} area with ${plantCount} plant${plantCount === 1 ? "" : "s"} at ${crop.spacingCm.inRow} x ${crop.spacingCm.betweenRows} cm spacing.`,
+    });
   }
 
   return suggestions;

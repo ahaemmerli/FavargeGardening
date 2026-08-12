@@ -1,0 +1,5 @@
+# This project is a Vite/React TypeScript app and currently has no Python
+# runtime dependencies.
+#
+# Install the application dependencies with:
+#   npm install
