@@ -161,6 +161,24 @@ Acceptance criteria:
 - Plan includes season and year.
 - Existing local draft migration is handled.
 
+### P1-009: Succession Planting Needs Time-Aware Placements
+
+Status: Open
+
+Problem:
+During the growing season the user will harvest or remove crops and replace them with follow-up crops. The planner currently treats the map as a single static layout, so it cannot distinguish two crops that conflict at the same time from two crops that use the same area in sequence.
+
+Why it matters:
+A small garden depends on reuse of space over time. The app needs a pick-and-plant workflow for cases like harvesting radish, lettuce, or peas and replacing them with a later crop.
+
+Acceptance criteria:
+
+- Placements can store planned planting, harvest, removal, and replacement windows.
+- User can mark a crop block as harvested, removed, or replaced.
+- A replacement crop can reuse the same area without being treated as an overlap conflict when active periods do not overlap.
+- Analysis distinguishes current layout, future layout, and full-season plan.
+- Suggestions can propose follow-up crops based on crop family, season, spacing, and remaining growing window.
+
 ## P1 - Data And Domain Knowledge
 
 ### P1-004: Crop Catalog Needs Sourceable Data
@@ -180,7 +198,7 @@ Acceptance criteria:
 - Tests validate required fields are present for every crop.
 
 Progress:
-The crop catalog is now a dedicated module with selected-crop requests, projected yield estimates, small-garden suitability, Swiss suitability, garden value factors including rarity, and first-pass additional crop suggestions. The current values are local starter estimates; a sourceable catalog import/verification workflow remains open.
+The crop catalog is now a dedicated module with selected-crop requests, 29 representative Swiss organic seed crops, projected yield estimates, small-garden suitability, Swiss suitability, garden value factors including rarity, picker filters, and first-pass additional crop suggestions. The current values are local starter estimates; a sourceable catalog import/verification workflow remains open.
 
 ### P1-005: Companion Planting Rules Need Confidence Levels
 

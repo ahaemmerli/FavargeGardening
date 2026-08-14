@@ -55,6 +55,7 @@ export const gardenBoundary: RectGeometry = {
 
 export const svgUnitsPerDrawingMm = 96 / 25.4;
 export const realMmPerDrawingMm = 50;
+export const cropPlacementGridCm = 10;
 
 export const beds: Bed[] = [
   {
@@ -349,6 +350,45 @@ export function centimetersToSvgWidth(bed: Bed, centimeters: number) {
 
 export function centimetersToSvgHeight(bed: Bed, centimeters: number) {
   return metersToSvgHeight(bed, centimeters / 100);
+}
+
+export function getBedGridSize(bed: Bed, gridSizeCm = cropPlacementGridCm) {
+  return {
+    width: centimetersToSvgWidth(bed, gridSizeCm),
+    height: centimetersToSvgHeight(bed, gridSizeCm),
+  };
+}
+
+function snapValueToGrid(value: number, origin: number, step: number) {
+  if (step <= 0) return value;
+
+  return origin + Math.round((value - origin) / step) * step;
+}
+
+export function snapPointToBedGrid(
+  point: Pick<RectGeometry, "x" | "y">,
+  bed: Bed,
+  gridSizeCm = cropPlacementGridCm,
+) {
+  const grid = getBedGridSize(bed, gridSizeCm);
+
+  return {
+    x: snapValueToGrid(point.x, bed.x, grid.width),
+    y: snapValueToGrid(point.y, bed.y, grid.height),
+  };
+}
+
+export function snapRectSizeToBedGrid(
+  rect: Pick<RectGeometry, "width" | "height">,
+  bed: Bed,
+  gridSizeCm = cropPlacementGridCm,
+) {
+  const grid = getBedGridSize(bed, gridSizeCm);
+
+  return {
+    width: Math.max(grid.width, Math.round(rect.width / grid.width) * grid.width),
+    height: Math.max(grid.height, Math.round(rect.height / grid.height) * grid.height),
+  };
 }
 
 export function svgUnitsToDrawingMm(svgUnits: number) {

@@ -29,8 +29,10 @@ A React and TypeScript app for planning vegetable placement in the Favarge garde
 - Crop movement and resizing are constrained to the assigned bed.
 - Crop requests show only selected crops instead of a full zero-filled catalog.
 - Crop selection captures priority and rough intent; actual plant count comes from placed block size.
+- Crop amount targets can be scaled by the number of people the garden should feed.
 - Add Crop picker filters toward small-garden-suitable crops.
-- Crop catalog includes projected yield and garden value factors, including rarity.
+- Crop picker supports search, category, planting season, sun, water, fit, and high-value filters.
+- Crop catalog includes 29 representative Swiss organic seed crops with projected yield and garden value factors, including rarity.
 - The app suggests potential additional crops based on garden value, small-garden fit, and companion matches.
 - Placement analysis summarizes actual placed plants, area, and projected yield.
 - Sidebar uses Garden, Crops, and Analysis tabs to keep the workspace compact.

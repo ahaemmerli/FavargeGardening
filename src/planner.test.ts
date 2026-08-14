@@ -5,18 +5,25 @@ import {
   crops,
   describeGardenValue,
   describeYieldEstimate,
+  filterCrops,
+  getCropCategories,
   suggestAdditionalCrops,
   type CropRequest,
 } from "./cropCatalog";
 import {
   analyzePlacements,
+  canInterplant,
+  createAdditionalPlacement,
   createSuggestions,
   getBlockLayoutFromSize,
   getBlockLayout,
   getCompanionSummary,
   getCropFootprint,
   getDefaultPlantsPerBlock,
+  getPlantPositions,
   getStarterPlantsForIntent,
+  normalizePeopleCount,
+  optimizePlacementsForRequests,
   type Placement,
 } from "./planner";
 import { beds, centimetersToSvgHeight, centimetersToSvgWidth } from "./garden";
@@ -24,6 +31,16 @@ import { beds, centimetersToSvgHeight, centimetersToSvgWidth } from "./garden";
 function request(cropId: CropRequest["cropId"], intent: CropRequest["intent"] = "normal"): CropRequest {
   return { cropId, priority: "must", intent };
 }
+
+const defaultCropFilters = {
+  search: "",
+  category: "all",
+  sun: "all" as const,
+  water: "all" as const,
+  suitability: "all" as const,
+  season: "all" as const,
+  highValueOnly: false,
+};
 
 describe("planner", () => {
   it("creates one starter placement block for each selected crop", () => {
@@ -46,6 +63,220 @@ describe("planner", () => {
     expect(getStarterPlantsForIntent(cropById.carrot, "lots")).toBe(24);
     expect(carrotBlocks).toHaveLength(1);
     expect(carrotBlocks[0].plantCount).toBe(24);
+  });
+
+  it("scales crop intent targets by household size", () => {
+    expect(normalizePeopleCount(0)).toBe(1);
+    expect(normalizePeopleCount(20)).toBe(12);
+    expect(getStarterPlantsForIntent(cropById.tomato, "normal", 4)).toBe(4);
+    expect(getStarterPlantsForIntent(cropById.carrot, "some", 3)).toBe(18);
+  });
+
+  it("uses the crop request placement mode for new suggestions", () => {
+    const suggestions = createSuggestions(
+      [{ cropId: "basil", priority: "must", intent: "normal", placementMode: "interplant" }],
+      [],
+      345,
+    );
+
+    expect(suggestions[0].cropId).toBe("basil");
+    expect(suggestions[0].mode).toBe("interplant");
+  });
+
+  it("uses household size when creating new placement suggestions", () => {
+    const suggestions = createSuggestions([request("tomato")], [], 654, beds, 4);
+
+    expect(suggestions[0].cropId).toBe("tomato");
+    expect(suggestions[0].plantCount).toBe(4);
+  });
+
+  it("can create additional placement blocks for the same crop request", () => {
+    const first = createAdditionalPlacement(request("carrot", "some"), [], 456)!;
+    const second = createAdditionalPlacement(request("carrot", "some"), [first], 456)!;
+
+    expect(first.cropId).toBe("carrot");
+    expect(second.cropId).toBe("carrot");
+    expect(first.id).not.toBe(second.id);
+    expect(first.plantCount).toBe(second.plantCount);
+  });
+
+  it("optimizes unlocked blocks to the current crop intent target", () => {
+    const first = createAdditionalPlacement(request("carrot", "some"), [], 456)!;
+    const second = createAdditionalPlacement(request("carrot", "some"), [first], 456)!;
+    const optimized = optimizePlacementsForRequests([request("carrot", "lots")], [first, second], 789);
+    const carrotBlocks = optimized.filter((placement) => placement.cropId === "carrot");
+
+    expect(carrotBlocks).toHaveLength(1);
+    expect(carrotBlocks[0].plantCount).toBe(getStarterPlantsForIntent(cropById.carrot, "lots"));
+  });
+
+  it("optimizes unlocked blocks to household-scaled targets", () => {
+    const optimized = optimizePlacementsForRequests([request("tomato")], [], 159, beds, [], 3);
+    const tomato = optimized.find((placement) => placement.cropId === "tomato")!;
+
+    expect(tomato.plantCount).toBe(3);
+  });
+
+  it("does not resize or delete locked blocks while optimizing requests", () => {
+    const lockedTomato: Placement = {
+      id: "locked-tomato",
+      cropId: "tomato",
+      bedId: "right-upper",
+      plantCount: 1,
+      columns: 1,
+      rows: 1,
+      x: 400,
+      y: 140,
+      width: 90,
+      height: 62,
+      locked: true,
+      reason: "User locked this placement.",
+    };
+    const optimized = optimizePlacementsForRequests([request("tomato", "lots")], [lockedTomato], 789);
+
+    expect(optimized.find((placement) => placement.id === lockedTomato.id)).toEqual(lockedTomato);
+    expect(optimized.filter((placement) => placement.cropId === "tomato")).toHaveLength(2);
+  });
+
+  it("places optimized blocks to avoid ordinary crop overlap when space is available", () => {
+    const optimized = optimizePlacementsForRequests([request("tomato"), request("basil")], [], 246, beds, []);
+    const analysis = analyzePlacements(optimized, beds, []);
+
+    expect(optimized).toHaveLength(2);
+    expect(analysis.findings.some((finding) => finding.message.includes("Overlaps crop block"))).toBe(false);
+  });
+
+  it("can automatically choose basil interplanting inside tomato blocks", () => {
+    const optimized = optimizePlacementsForRequests(
+      [
+        { ...request("tomato", "lots"), placementMode: "auto" },
+        { ...request("basil", "some"), placementMode: "auto" },
+      ],
+      [],
+      468,
+      beds,
+      [],
+    );
+    const basil = optimized.find((placement) => placement.cropId === "basil")!;
+    const tomato = optimized.find((placement) => placement.id === basil.hostPlacementId);
+    const analysis = analyzePlacements(optimized, beds, []);
+
+    expect(basil.mode).toBe("interplant");
+    expect(tomato?.cropId).toBe("tomato");
+    expect(analysis.findings.some((finding) => finding.message.includes("Overlaps crop block"))).toBe(false);
+    expect(analysis.findings.some((finding) => finding.message.includes("interplanted with"))).toBe(true);
+  });
+
+  it("does not automatically interplant when standalone is forced", () => {
+    const optimized = optimizePlacementsForRequests(
+      [
+        { ...request("tomato", "lots"), placementMode: "auto" },
+        { ...request("basil", "some"), placementMode: "standalone" },
+      ],
+      [],
+      579,
+      beds,
+      [],
+    );
+    const basil = optimized.find((placement) => placement.cropId === "basil")!;
+
+    expect(basil.mode).toBe("standalone");
+    expect(basil.hostPlacementId).toBeUndefined();
+  });
+
+  it("places bad companions in another bed when one is available", () => {
+    const rightUpper = beds.find((bed) => bed.id === "right-upper")!;
+    const tomatoFootprint = getCropFootprint(cropById.tomato, rightUpper);
+    const lockedTomato: Placement = {
+      id: "locked-tomato",
+      cropId: "tomato",
+      bedId: rightUpper.id,
+      plantCount: 1,
+      columns: 1,
+      rows: 1,
+      x: rightUpper.x,
+      y: rightUpper.y,
+      width: tomatoFootprint.width,
+      height: tomatoFootprint.height,
+      locked: true,
+      reason: "User locked this placement.",
+    };
+
+    const optimized = optimizePlacementsForRequests(
+      [request("tomato"), request("cabbage")],
+      [lockedTomato],
+      135,
+      beds,
+      [],
+    );
+    const cabbage = optimized.find((placement) => placement.cropId === "cabbage")!;
+    const analysis = analyzePlacements(optimized, beds, []);
+
+    expect(cabbage.bedId).not.toBe(lockedTomato.bedId);
+    expect(analysis.findings.some((finding) => finding.message.includes("Avoid near"))).toBe(false);
+  });
+
+  it("places optimized blocks away from path and access zones when space is available", () => {
+    const rightUpper = beds.find((bed) => bed.id === "right-upper")!;
+    const accessZones = [
+      {
+        id: "covered-bed-path",
+        name: "Covered bed path",
+        kind: "path" as const,
+        x: rightUpper.x,
+        y: rightUpper.y,
+        width: rightUpper.width,
+        height: rightUpper.height,
+      },
+    ];
+
+    const optimized = optimizePlacementsForRequests([request("tomato")], [], 864, beds, accessZones);
+    const analysis = analyzePlacements(optimized, beds, accessZones);
+
+    expect(optimized[0].bedId).not.toBe(rightUpper.id);
+    expect(analysis.findings.some((finding) => finding.message.includes("soft crop path"))).toBe(false);
+  });
+
+  it("allows tiny soft path edge contact without reporting a path overlap", () => {
+    const rightUpper = beds.find((bed) => bed.id === "right-upper")!;
+    const tomatoFootprint = getCropFootprint(cropById.tomato, rightUpper);
+    const tomato: Placement = {
+      id: "tomato",
+      cropId: "tomato",
+      bedId: rightUpper.id,
+      plantCount: 1,
+      columns: 1,
+      rows: 1,
+      x: rightUpper.x,
+      y: rightUpper.y,
+      width: tomatoFootprint.width,
+      height: tomatoFootprint.height,
+      locked: false,
+      reason: "Test.",
+    };
+    const edgePath = {
+      id: "edge-path",
+      name: "Edge path",
+      kind: "path" as const,
+      x: rightUpper.x,
+      y: rightUpper.y - centimetersToSvgHeight(rightUpper, 8),
+      width: rightUpper.width,
+      height: centimetersToSvgHeight(rightUpper, 10),
+    };
+
+    const analysis = analyzePlacements([tomato], beds, [edgePath]);
+
+    expect(analysis.findings.some((finding) => finding.message.includes("soft crop path"))).toBe(false);
+  });
+
+  it("splits large crop targets into multiple smaller blocks when one block cannot fit", () => {
+    const optimized = optimizePlacementsForRequests([request("winterSquash", "lots")], [], 753, beds, [], 2);
+    const squashBlocks = optimized.filter((placement) => placement.cropId === "winterSquash");
+    const analysis = analyzePlacements(optimized, beds, []);
+
+    expect(squashBlocks).toHaveLength(2);
+    expect(squashBlocks.reduce((total, placement) => total + placement.plantCount, 0)).toBe(4);
+    expect(analysis.findings.some((finding) => finding.message.includes("extends outside"))).toBe(false);
   });
 
   it("updates plant count from a resized block size", () => {
@@ -108,6 +339,29 @@ describe("planner", () => {
     expect(suggestions.filter((placement) => placement.cropId === "tomato")).toHaveLength(1);
   });
 
+  it("keeps resized unlocked placements when suggestions are refreshed", () => {
+    const resizedCarrot: Placement = {
+      id: "resized-carrot",
+      cropId: "carrot",
+      bedId: "right-upper",
+      plantCount: 15,
+      columns: 5,
+      rows: 3,
+      x: 420,
+      y: 150,
+      width: 120,
+      height: 90,
+      locked: false,
+      reason: "User resized this block.",
+    };
+
+    const suggestions = createSuggestions([request("carrot"), request("basil")], [resizedCarrot], 456);
+
+    expect(suggestions.find((placement) => placement.id === "resized-carrot")).toEqual(resizedCarrot);
+    expect(suggestions.filter((placement) => placement.cropId === "carrot")).toHaveLength(1);
+    expect(suggestions.find((placement) => placement.cropId === "basil")).toBeDefined();
+  });
+
   it("reports good companions and avoid warnings inside the same bed", () => {
     const tomato: Placement = {
       id: "tomato",
@@ -158,7 +412,7 @@ describe("planner", () => {
   });
 
   it("defines required catalog fields for every crop", () => {
-    expect(crops.length).toBeGreaterThanOrEqual(10);
+    expect(crops.length).toBeGreaterThanOrEqual(29);
 
     for (const crop of crops) {
       expect(crop.name).toBeTruthy();
@@ -171,6 +425,56 @@ describe("planner", () => {
       expect(crop.gardenValue.rarity).toBeLessThanOrEqual(5);
       expect(calculateGardenValueScore(crop)).toBeGreaterThan(0);
     }
+  });
+
+  it("includes representative Zollinger-like crop categories", () => {
+    expect(cropById.arugula.category).toBe("Leaf");
+    expect(cropById.pakChoi.category).toBe("Asian green");
+    expect(cropById.kohlrabi.family).toBe("Brassica");
+    expect(cropById.leek.family).toBe("Allium");
+    expect(cropById.eggplant.family).toBe("Nightshade");
+    expect(cropById.winterSquash.family).toBe("Cucurbit");
+  });
+
+  it("offers practical tomato size variants", () => {
+    expect(cropById.tomatoCherry.name).toBe("Tomato, cherry");
+    expect(cropById.tomato.name).toBe("Tomato, medium");
+    expect(cropById.tomatoBeefsteak.name).toBe("Tomato, large meaty");
+    expect(cropById.tomatoBeefsteak.spacingCm.inRow).toBeGreaterThan(cropById.tomatoCherry.spacingCm.inRow);
+    expect(cropById.basil.companions).toEqual(
+      expect.arrayContaining(["tomatoCherry", "tomato", "tomatoBeefsteak"]),
+    );
+  });
+
+  it("filters the crop picker catalog by selected crops, category, season, and value", () => {
+    const selectedCropIds = new Set<CropRequest["cropId"]>(["tomato"]);
+    const leafCrops = filterCrops(crops, selectedCropIds, {
+      ...defaultCropFilters,
+      category: "Leaf",
+      season: "spring",
+      highValueOnly: true,
+    });
+
+    expect(getCropCategories()).toContain("Leaf");
+    expect(leafCrops.length).toBeGreaterThan(0);
+    expect(leafCrops.every((crop) => crop.category === "Leaf")).toBe(true);
+    expect(leafCrops.every((crop) => crop.smallGardenSuitability !== "poor")).toBe(true);
+    expect(leafCrops.every((crop) => calculateGardenValueScore(crop) >= 70)).toBe(true);
+    expect(leafCrops.some((crop) => crop.id === "tomato")).toBe(false);
+  });
+
+  it("searches picker crops by tags and source notes", () => {
+    const sourceMatches = filterCrops(crops, new Set(), {
+      ...defaultCropFilters,
+      search: "repeat harvesting",
+    });
+    const tagMatches = filterCrops(crops, new Set(), {
+      ...defaultCropFilters,
+      search: "snack",
+    });
+
+    expect(sourceMatches.some((crop) => crop.id === "basil")).toBe(true);
+    expect(tagMatches.some((crop) => crop.id === "tomatoCherry")).toBe(true);
   });
 
   it("describes yield estimates without treating per-area crops as plant counts", () => {
@@ -226,5 +530,130 @@ describe("planner", () => {
     expect(lettuceScore.findings.some((finding) => finding.message.includes("prefers partial sun"))).toBe(
       true,
     );
+  });
+
+  it("detects spacing conflicts between overlapping crop blocks", () => {
+    const rightUpper = beds.find((bed) => bed.id === "right-upper")!;
+    const carrot: Placement = {
+      id: "carrot",
+      cropId: "carrot",
+      bedId: rightUpper.id,
+      plantCount: 12,
+      columns: 4,
+      rows: 3,
+      x: rightUpper.x + 20,
+      y: rightUpper.y + 20,
+      width: 80,
+      height: 60,
+      locked: false,
+      reason: "Test.",
+    };
+    const lettuce: Placement = {
+      ...carrot,
+      id: "lettuce",
+      cropId: "lettuce",
+      x: carrot.x + 30,
+      y: carrot.y + 20,
+    };
+
+    const analysis = analyzePlacements([carrot, lettuce], beds, []);
+    const carrotScore = analysis.placements.find((placement) => placement.placementId === "carrot")!;
+    const lettuceScore = analysis.placements.find((placement) => placement.placementId === "lettuce")!;
+
+    expect(carrotScore.score).toBeLessThan(100);
+    expect(lettuceScore.score).toBeLessThan(100);
+    expect(carrotScore.findings.some((finding) => finding.message.includes("Overlaps crop block"))).toBe(
+      true,
+    );
+    expect(lettuceScore.findings.some((finding) => finding.message.includes("Overlaps crop block"))).toBe(
+      true,
+    );
+  });
+
+  it("allows declared basil interplanting inside tomato blocks when plant clearance is sufficient", () => {
+    const rightUpper = beds.find((bed) => bed.id === "right-upper")!;
+    const tomatoFootprint = getCropFootprint(cropById.tomato, rightUpper);
+    const basilFootprint = getCropFootprint(cropById.basil, rightUpper);
+    const tomato: Placement = {
+      id: "tomato",
+      cropId: "tomato",
+      bedId: rightUpper.id,
+      plantCount: 1,
+      columns: 1,
+      rows: 1,
+      x: rightUpper.x + 20,
+      y: rightUpper.y + 20,
+      width: tomatoFootprint.width,
+      height: tomatoFootprint.height,
+      locked: false,
+      reason: "Test.",
+    };
+    const basil: Placement = {
+      id: "basil",
+      cropId: "basil",
+      bedId: rightUpper.id,
+      mode: "interplant",
+      hostPlacementId: tomato.id,
+      plantCount: 1,
+      columns: 1,
+      rows: 1,
+      x: tomato.x + tomatoFootprint.width - basilFootprint.width,
+      y: tomato.y + tomatoFootprint.height - basilFootprint.height,
+      width: basilFootprint.width,
+      height: basilFootprint.height,
+      locked: false,
+      reason: "Test.",
+    };
+
+    const analysis = analyzePlacements([tomato, basil], beds, []);
+    const basilScore = analysis.placements.find((placement) => placement.placementId === "basil")!;
+
+    expect(canInterplant("basil", "tomato")).toBe(true);
+    expect(getPlantPositions(tomato, rightUpper)).toHaveLength(1);
+    expect(basilScore.findings.some((finding) => finding.message.includes("interplanted with"))).toBe(true);
+    expect(basilScore.findings.some((finding) => finding.message.includes("Overlaps crop block"))).toBe(
+      false,
+    );
+  });
+
+  it("warns when a declared interplant is too close to the host plant", () => {
+    const rightUpper = beds.find((bed) => bed.id === "right-upper")!;
+    const tomatoFootprint = getCropFootprint(cropById.tomato, rightUpper);
+    const basilFootprint = getCropFootprint(cropById.basil, rightUpper);
+    const tomato: Placement = {
+      id: "tomato",
+      cropId: "tomato",
+      bedId: rightUpper.id,
+      plantCount: 1,
+      columns: 1,
+      rows: 1,
+      x: rightUpper.x + 20,
+      y: rightUpper.y + 20,
+      width: tomatoFootprint.width,
+      height: tomatoFootprint.height,
+      locked: false,
+      reason: "Test.",
+    };
+    const basil: Placement = {
+      id: "basil",
+      cropId: "basil",
+      bedId: rightUpper.id,
+      mode: "interplant",
+      hostPlacementId: tomato.id,
+      plantCount: 1,
+      columns: 1,
+      rows: 1,
+      x: tomato.x + tomatoFootprint.width / 2 - basilFootprint.width / 2,
+      y: tomato.y + tomatoFootprint.height / 2 - basilFootprint.height / 2,
+      width: basilFootprint.width,
+      height: basilFootprint.height,
+      locked: false,
+      reason: "Test.",
+    };
+
+    const analysis = analyzePlacements([tomato, basil], beds, []);
+    const basilScore = analysis.placements.find((placement) => placement.placementId === "basil")!;
+
+    expect(basilScore.findings.some((finding) => finding.message.includes("too close"))).toBe(true);
   });
 });

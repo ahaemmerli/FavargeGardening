@@ -8,9 +8,12 @@ import {
   Home,
   Lock,
   LockOpen,
+  Minus,
+  Plus,
   RotateCcw,
   Sparkles,
   Sprout,
+  Users,
   X,
   ZoomIn,
   ZoomOut,
@@ -28,10 +31,13 @@ import {
   findBedAtPoint,
   formatScaleBarLabel,
   getBedLabel,
+  getBedGridSize,
   metersToSvgFromScale,
   normalizeGardenDefinition,
   parseGardenDefinitionFromSvg,
   panViewBox,
+  snapPointToBedGrid,
+  snapRectSizeToBedGrid,
   svgUnitsToRealMeters,
   type GardenDefinition,
   type RectGeometry,
@@ -47,16 +53,23 @@ import {
   describeGardenValue,
   describeWater,
   describeYieldEstimate,
+  filterCrops,
+  getCropCategories,
   suggestAdditionalCrops,
   type CropId,
   type CropRequest,
+  type CropSeasonFilter,
 } from "./cropCatalog";
 import {
   analyzePlacements,
-  createSuggestions,
+  canInterplant,
+  createAdditionalPlacement,
   getBlockLayoutFromSize,
   getCropFootprint,
   getCompanionSummary,
+  getStarterPlantsForIntent,
+  normalizePeopleCount,
+  optimizePlacementsForRequests,
   type Placement,
 } from "./planner";
 
@@ -88,6 +101,9 @@ function loadPlacements() {
       )
       .map((placement) => ({
         ...placement,
+        mode: placement.mode === "interplant" || placement.mode === "border" ? placement.mode : "standalone",
+        hostPlacementId:
+          typeof placement.hostPlacementId === "string" ? placement.hostPlacementId : undefined,
         plantCount: placement.plantCount ?? 1,
         columns: placement.columns ?? 1,
         rows: placement.rows ?? 1,
@@ -176,13 +192,22 @@ function moveGardenDefinition(garden: GardenDefinition, deltaX: number, deltaY: 
 
 export function App() {
   const [requests, setRequests] = React.useState<CropRequest[]>([
-    { cropId: "tomato", priority: "must", intent: "normal" },
-    { cropId: "basil", priority: "nice", intent: "normal" },
-    { cropId: "carrot", priority: "nice", intent: "some" },
-    { cropId: "lettuce", priority: "nice", intent: "some" },
+    { cropId: "tomato", priority: "must", intent: "normal", placementMode: "auto" },
+    { cropId: "basil", priority: "nice", intent: "normal", placementMode: "auto" },
+    { cropId: "carrot", priority: "nice", intent: "some", placementMode: "auto" },
+    { cropId: "lettuce", priority: "nice", intent: "some", placementMode: "auto" },
   ]);
   const [cropPickerOpen, setCropPickerOpen] = React.useState(false);
   const [cropSearch, setCropSearch] = React.useState("");
+  const [peopleToFeed, setPeopleToFeed] = React.useState(1);
+  const [cropCategoryFilter, setCropCategoryFilter] = React.useState("all");
+  const [cropSeasonFilter, setCropSeasonFilter] = React.useState<CropSeasonFilter>("all");
+  const [cropSunFilter, setCropSunFilter] = React.useState<"all" | "partial" | "full">("all");
+  const [cropWaterFilter, setCropWaterFilter] = React.useState<"all" | "low" | "medium" | "high">("all");
+  const [cropSuitabilityFilter, setCropSuitabilityFilter] = React.useState<
+    "all" | "excellent" | "good" | "poor"
+  >("all");
+  const [highValueOnly, setHighValueOnly] = React.useState(false);
   const [placements, setPlacements] = React.useState<Placement[]>(loadPlacements);
   const [garden, setGarden] = React.useState<GardenDefinition>(loadGardenDefinition);
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
@@ -206,12 +231,20 @@ export function App() {
   const selectedBed = garden.beds.find((bed) => bed.id === selectedBedId);
   const selectedAccessZone = garden.accessZones.find((zone) => zone.id === selectedAccessZoneId);
   const gardenDefinitionLocked = garden.locked;
+  const selectedInterplantHosts = selectedPlacement
+    ? placements.filter(
+        (placement) =>
+          placement.id !== selectedPlacement.id &&
+          placement.bedId === selectedPlacement.bedId &&
+          canInterplant(selectedPlacement.cropId, placement.cropId),
+      )
+    : [];
 
   function addCropRequest(cropId: CropId) {
     setRequests((current) =>
       current.some((request) => request.cropId === cropId)
         ? current
-        : [...current, { cropId, priority: "nice", intent: "normal" }],
+        : [...current, { cropId, priority: "nice", intent: "normal", placementMode: "auto" }],
     );
     setCropSearch("");
     setCropPickerOpen(false);
@@ -233,8 +266,70 @@ export function App() {
     );
   }
 
+  function updateRequestPlacementMode(cropId: CropId, placementMode: CropRequest["placementMode"]) {
+    setRequests((current) =>
+      current.map((request) => (request.cropId === cropId ? { ...request, placementMode } : request)),
+    );
+    setPlacements((current) =>
+      current.map((placement) =>
+        placement.cropId === cropId && !placement.locked
+          ? {
+              ...placement,
+              mode: placementMode === "auto" || !placementMode ? "standalone" : placementMode,
+              hostPlacementId: placementMode === "interplant" ? placement.hostPlacementId : undefined,
+            }
+          : placement,
+      ),
+    );
+  }
+
+  function updatePeopleToFeed(value: number) {
+    setPeopleToFeed(normalizePeopleCount(value));
+  }
+
   function suggestPlan() {
-    setPlacements(createSuggestions(requests, placements, Date.now(), garden.beds));
+    setPlacements(
+      optimizePlacementsForRequests(
+        requests,
+        placements,
+        Date.now(),
+        garden.beds,
+        garden.accessZones,
+        peopleToFeed,
+      ),
+    );
+  }
+
+  function addCropPlacementBlock(cropId: CropId) {
+    const request = requests.find((candidate) => candidate.cropId === cropId);
+    if (!request) return;
+
+    const placement = createAdditionalPlacement(
+      request,
+      placements,
+      Date.now(),
+      garden.beds,
+      undefined,
+      garden.accessZones,
+      peopleToFeed,
+    );
+    if (!placement) return;
+
+    setPlacements((current) => [...current, placement]);
+    setSelectedId(placement.id);
+    setSelectedBedId("");
+    setSelectedAccessZoneId("");
+    setActiveSidebarTab("analysis");
+  }
+
+  function deleteLatestCropPlacementBlock(cropId: CropId) {
+    const removable = [...placements]
+      .reverse()
+      .find((placement) => placement.cropId === cropId && !placement.locked);
+    if (!removable) return;
+
+    setPlacements((current) => current.filter((placement) => placement.id !== removable.id));
+    if (selectedId === removable.id) setSelectedId(null);
   }
 
   function resetPlan() {
@@ -263,6 +358,20 @@ export function App() {
     setPlacements((current) =>
       current.map((placement) =>
         placement.id === id ? { ...placement, locked: !placement.locked } : placement,
+      ),
+    );
+  }
+
+  function updatePlacementHost(id: string, hostPlacementId: string) {
+    setPlacements((current) =>
+      current.map((placement) =>
+        placement.id === id
+          ? {
+              ...placement,
+              mode: "interplant",
+              hostPlacementId: hostPlacementId || undefined,
+            }
+          : placement,
       ),
     );
   }
@@ -761,11 +870,20 @@ export function App() {
             },
             targetBed,
           );
+          const snappedPoint = snapPointToBedGrid(nextRect, targetBed);
+          const snappedRect = clampRectToBed(
+            {
+              ...nextRect,
+              x: snappedPoint.x,
+              y: snappedPoint.y,
+            },
+            targetBed,
+          );
 
           return {
             ...resizedForTargetBed,
-            x: nextRect.x,
-            y: nextRect.y,
+            x: snappedRect.x,
+            y: snappedRect.y,
           };
         }
 
@@ -780,11 +898,19 @@ export function App() {
           },
           bed,
         );
+        const snappedSize = snapRectSizeToBedGrid(clampedSize, bed);
+        const clampedSnappedSize = clampRectSizeToBed(
+          {
+            ...placement,
+            ...snappedSize,
+          },
+          bed,
+        );
         const layout = getBlockLayoutFromSize(
           cropById[placement.cropId],
           bed,
-          clampedSize.width,
-          clampedSize.height,
+          clampedSnappedSize.width,
+          clampedSnappedSize.height,
         );
 
         return {
@@ -907,19 +1033,16 @@ export function App() {
   const scaleBarY = viewBox.y + viewBox.height - scaleMargin;
   const scaleBarLabel = formatScaleBarLabel(scaleBarMeters);
   const requestedCropIds = new Set(requests.map((request) => request.cropId));
-  const normalizedCropSearch = cropSearch.trim().toLowerCase();
-  const availableCrops = crops
-    .filter((crop) => !requestedCropIds.has(crop.id))
-    .filter((crop) => crop.smallGardenSuitability !== "poor")
-    .filter((crop) => {
-      if (!normalizedCropSearch) return true;
-
-      return [crop.name, crop.latinName, crop.category, crop.family, ...crop.tags]
-        .join(" ")
-        .toLowerCase()
-        .includes(normalizedCropSearch);
-    })
-    .sort((left, right) => calculateGardenValueScore(right) - calculateGardenValueScore(left));
+  const cropCategories = getCropCategories(crops);
+  const availableCrops = filterCrops(crops, requestedCropIds, {
+    search: cropSearch,
+    category: cropCategoryFilter,
+    sun: cropSunFilter,
+    water: cropWaterFilter,
+    suitability: cropSuitabilityFilter,
+    season: cropSeasonFilter,
+    highValueOnly,
+  });
   const recommendedCrops = suggestAdditionalCrops(requests, 3);
   const planScore = analyzePlacements(placements, garden.beds, garden.accessZones);
   const placementAnalysis = requests.map((request) => {
@@ -1011,6 +1134,42 @@ export function App() {
                 className={selectedBedId === bed.id ? "bed selected-bed" : "bed"}
                 onPointerDown={(event) => startBedDrag(event, bed.id)}
               />
+              {(() => {
+                const grid = getBedGridSize(bed);
+                const verticalLines = Math.max(0, Math.floor(bed.width / grid.width) - 1);
+                const horizontalLines = Math.max(0, Math.floor(bed.height / grid.height) - 1);
+
+                return (
+                  <g className="bed-grid" aria-hidden="true">
+                    {Array.from({ length: verticalLines }, (_, index) => {
+                      const x = bed.x + grid.width * (index + 1);
+
+                      return (
+                        <line
+                          key={`${bed.id}-grid-v-${index}`}
+                          x1={x}
+                          y1={bed.y}
+                          x2={x}
+                          y2={bed.y + bed.height}
+                        />
+                      );
+                    })}
+                    {Array.from({ length: horizontalLines }, (_, index) => {
+                      const y = bed.y + grid.height * (index + 1);
+
+                      return (
+                        <line
+                          key={`${bed.id}-grid-h-${index}`}
+                          x1={bed.x}
+                          y1={y}
+                          x2={bed.x + bed.width}
+                          y2={y}
+                        />
+                      );
+                    })}
+                  </g>
+                );
+              })()}
               <text x={bed.x + 12} y={bed.y + 24} className="bed-label">
                 {bed.name}
               </text>
@@ -1089,7 +1248,14 @@ export function App() {
             return (
               <g
                 key={placement.id}
-                className={selected ? "placement selected" : "placement"}
+                className={[
+                  "placement",
+                  selected ? "selected" : "",
+                  placement.mode === "interplant" ? "interplant-placement" : "",
+                  placement.mode === "border" ? "border-placement" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
                 onClick={() => {
                   setSelectedId(placement.id);
                   setSelectedBedId("");
@@ -1426,11 +1592,32 @@ export function App() {
               <Sprout size={18} />
               <h2>Required vegetables</h2>
             </div>
+            <label className="field-label people-field">
+              <span>
+                <Users size={16} />
+                People to feed
+              </span>
+              <input
+                type="number"
+                min="1"
+                max="12"
+                step="1"
+                value={peopleToFeed}
+                onChange={(event) => updatePeopleToFeed(event.currentTarget.valueAsNumber)}
+              />
+            </label>
             {requests.length > 0 ? (
               <div className="crop-list">
                 {requests.map((request) => {
                   const crop = cropById[request.cropId];
                   const gardenValueScore = calculateGardenValueScore(crop);
+                  const targetPlantCount = getStarterPlantsForIntent(crop, request.intent, peopleToFeed);
+                  const cropPlacementCount = placements.filter(
+                    (placement) => placement.cropId === crop.id,
+                  ).length;
+                  const removableCropPlacementCount = placements.filter(
+                    (placement) => placement.cropId === crop.id && !placement.locked,
+                  ).length;
 
                   return (
                     <div className="crop-row selected-crop-row" key={crop.id}>
@@ -1443,6 +1630,11 @@ export function App() {
                         <span>
                           {describeGardenValue(gardenValueScore)} - starter yield{" "}
                           {describeYieldEstimate(crop)}
+                        </span>
+                        <span>
+                          {cropPlacementCount} block{cropPlacementCount === 1 ? "" : "s"} placed
+                          {" - "}
+                          {targetPlantCount} target plant{targetPlantCount === 1 ? "" : "s"}
                         </span>
                       </div>
                       <div className="crop-controls">
@@ -1471,6 +1663,40 @@ export function App() {
                           <option value="normal">{describeCropIntent("normal")}</option>
                           <option value="lots">{describeCropIntent("lots")}</option>
                         </select>
+                        <select
+                          aria-label={`${crop.name} placement mode`}
+                          value={request.placementMode ?? "auto"}
+                          onChange={(event) =>
+                            updateRequestPlacementMode(
+                              crop.id,
+                              event.currentTarget.value as CropRequest["placementMode"],
+                            )
+                          }
+                        >
+                          <option value="auto">Auto</option>
+                          <option value="standalone">Standalone</option>
+                          <option value="interplant">Interplant</option>
+                          <option value="border">Border</option>
+                        </select>
+                        <button
+                          className="icon-action"
+                          type="button"
+                          onClick={() => addCropPlacementBlock(crop.id)}
+                          aria-label={`Add ${crop.name} block`}
+                          title={`Add ${crop.name} block`}
+                        >
+                          <Plus size={16} />
+                        </button>
+                        <button
+                          className="icon-action"
+                          type="button"
+                          disabled={removableCropPlacementCount === 0}
+                          onClick={() => deleteLatestCropPlacementBlock(crop.id)}
+                          aria-label={`Delete latest ${crop.name} block`}
+                          title={`Delete latest ${crop.name} block`}
+                        >
+                          <Minus size={16} />
+                        </button>
                         <button
                           className="icon-action"
                           type="button"
@@ -1505,29 +1731,115 @@ export function App() {
                     placeholder="Tomato, herb, quick, high-value..."
                   />
                 </label>
-                <div className="crop-list">
-                  {availableCrops.slice(0, 8).map((crop) => {
-                    const gardenValueScore = calculateGardenValueScore(crop);
+                <div className="crop-filter-grid">
+                  <label className="field-label">
+                    Category
+                    <select
+                      value={cropCategoryFilter}
+                      onChange={(event) => setCropCategoryFilter(event.currentTarget.value)}
+                    >
+                      <option value="all">All</option>
+                      {cropCategories.map((category) => (
+                        <option value={category} key={category}>
+                          {category}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field-label">
+                    Planting
+                    <select
+                      value={cropSeasonFilter}
+                      onChange={(event) => setCropSeasonFilter(event.currentTarget.value as CropSeasonFilter)}
+                    >
+                      <option value="all">All</option>
+                      <option value="spring">Spring</option>
+                      <option value="summer">Summer</option>
+                      <option value="autumn">Autumn</option>
+                    </select>
+                  </label>
+                  <label className="field-label">
+                    Sun
+                    <select
+                      value={cropSunFilter}
+                      onChange={(event) =>
+                        setCropSunFilter(event.currentTarget.value as typeof cropSunFilter)
+                      }
+                    >
+                      <option value="all">All</option>
+                      <option value="full">Full</option>
+                      <option value="partial">Partial</option>
+                    </select>
+                  </label>
+                  <label className="field-label">
+                    Water
+                    <select
+                      value={cropWaterFilter}
+                      onChange={(event) =>
+                        setCropWaterFilter(event.currentTarget.value as typeof cropWaterFilter)
+                      }
+                    >
+                      <option value="all">All</option>
+                      <option value="low">Low</option>
+                      <option value="medium">Medium</option>
+                      <option value="high">High</option>
+                    </select>
+                  </label>
+                  <label className="field-label">
+                    Fit
+                    <select
+                      value={cropSuitabilityFilter}
+                      onChange={(event) =>
+                        setCropSuitabilityFilter(event.currentTarget.value as typeof cropSuitabilityFilter)
+                      }
+                    >
+                      <option value="all">Good or better</option>
+                      <option value="excellent">Excellent</option>
+                      <option value="good">Good</option>
+                    </select>
+                  </label>
+                  <label className="checkbox-field compact">
+                    <input
+                      type="checkbox"
+                      checked={highValueOnly}
+                      onChange={(event) => setHighValueOnly(event.currentTarget.checked)}
+                    />
+                    High value
+                  </label>
+                </div>
+                <div className="crop-picker-summary">
+                  {availableCrops.length} crop{availableCrops.length === 1 ? "" : "s"} available
+                </div>
+                <div className="crop-list picker-results">
+                  {availableCrops.length > 0 ? (
+                    availableCrops.slice(0, 12).map((crop) => {
+                      const gardenValueScore = calculateGardenValueScore(crop);
 
-                    return (
-                      <button
-                        className="crop-option"
-                        type="button"
-                        key={crop.id}
-                        onClick={() => addCropRequest(crop.id)}
-                      >
-                        <span className="crop-swatch" style={{ background: crop.color }} />
-                        <span>
-                          <strong>{crop.name}</strong>
+                      return (
+                        <button
+                          className="crop-option"
+                          type="button"
+                          key={crop.id}
+                          onClick={() => addCropRequest(crop.id)}
+                        >
+                          <span className="crop-swatch" style={{ background: crop.color }} />
                           <span>
-                            {describeGardenValue(gardenValueScore)} - {crop.smallGardenSuitability} small
-                            garden fit
+                            <strong>{crop.name}</strong>
+                            <span>
+                              {describeGardenValue(gardenValueScore)} - {crop.smallGardenSuitability} small
+                              garden fit - {describeWater(crop.water)}
+                            </span>
+                            <span>
+                              {crop.plantingWindow} - {describeYieldEstimate(crop)}
+                            </span>
+                            <span className="source-note">{crop.spacingSource}</span>
                           </span>
-                          <span>{describeYieldEstimate(crop)}</span>
-                        </span>
-                      </button>
-                    );
-                  })}
+                        </button>
+                      );
+                    })
+                  ) : (
+                    <p className="muted">No crops match the current filters.</p>
+                  )}
                 </div>
               </div>
             ) : null}
@@ -1634,6 +1946,35 @@ export function App() {
                     Spacing footprint: {cropById[selectedPlacement.cropId].spacingCm.inRow} x{" "}
                     {cropById[selectedPlacement.cropId].spacingCm.betweenRows} cm.
                   </p>
+                  <div className="placement-mode-grid">
+                    <p>Placement mode: {selectedPlacement.mode ?? "standalone"}.</p>
+                    {(selectedPlacement.mode ?? "standalone") === "interplant" ? (
+                      <label className="field-label">
+                        Host crop
+                        <select
+                          value={selectedPlacement.hostPlacementId ?? ""}
+                          disabled={selectedPlacement.locked}
+                          onChange={(event) =>
+                            updatePlacementHost(selectedPlacement.id, event.currentTarget.value)
+                          }
+                        >
+                          <option value="">Choose host</option>
+                          {selectedInterplantHosts.map((placement) => (
+                            <option value={placement.id} key={placement.id}>
+                              {cropById[placement.cropId].name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
+                    {(selectedPlacement.mode ?? "standalone") === "interplant" &&
+                    selectedInterplantHosts.length === 0 ? (
+                      <p className="muted">
+                        No compatible host crop in this bed yet. Basil can currently interplant with tomato
+                        blocks.
+                      </p>
+                    ) : null}
+                  </div>
                   <p>Projected yield from this block: {describePlacementYield(selectedPlacement)}.</p>
                   <p>{selectedPlacement.reason}</p>
                   <button

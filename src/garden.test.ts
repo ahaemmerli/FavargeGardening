@@ -13,6 +13,7 @@ import {
   findBedAtPoint,
   findContainingBed,
   formatScaleBarLabel,
+  getBedGridSize,
   getBedLabel,
   metersToSvgFromScale,
   metersToSvgHeight,
@@ -20,6 +21,8 @@ import {
   normalizeGardenDefinition,
   panViewBox,
   parseGardenDefinitionFromSvg,
+  snapPointToBedGrid,
+  snapRectSizeToBedGrid,
   svgUnitsToDrawingMm,
   svgUnitsToRealMeters,
   zoomViewBox,
@@ -62,6 +65,26 @@ describe("garden geometry", () => {
 
     expect(centimetersToSvgWidth(rightUpper, 100)).toBeCloseTo(75.59, 2);
     expect(centimetersToSvgHeight(rightUpper, 25)).toBeCloseTo(18.9, 1);
+  });
+
+  it("snaps crop placement coordinates and sizes to a 10 cm bed grid", () => {
+    const rightUpper = beds.find((bed) => bed.id === "right-upper")!;
+    const grid = getBedGridSize(rightUpper);
+    const snappedPoint = snapPointToBedGrid(
+      { x: rightUpper.x + grid.width * 2.4, y: rightUpper.y + grid.height * 3.6 },
+      rightUpper,
+    );
+    const snappedSize = snapRectSizeToBedGrid(
+      { width: grid.width * 4.4, height: grid.height * 2.6 },
+      rightUpper,
+    );
+
+    expect(grid.width).toBeCloseTo(centimetersToSvgWidth(rightUpper, 10));
+    expect(grid.height).toBeCloseTo(centimetersToSvgHeight(rightUpper, 10));
+    expect(snappedPoint.x).toBeCloseTo(rightUpper.x + grid.width * 2);
+    expect(snappedPoint.y).toBeCloseTo(rightUpper.y + grid.height * 4);
+    expect(snappedSize.width).toBeCloseTo(grid.width * 4);
+    expect(snappedSize.height).toBeCloseTo(grid.height * 3);
   });
 
   it("finds whether a crop block is contained by a planting bed", () => {

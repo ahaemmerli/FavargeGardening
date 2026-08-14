@@ -300,10 +300,11 @@ Deferred setup items:
 - Optional later: Add polygon/freeform drawing tools beyond rectangles.
 - Note: The SVG scale is 1 drawing mm = 50 real mm. The corrected drawing derives the three right beds to 5 m x 1.25 m and the lower-left bed to 3 m x 1 m.
 
-### Phase 2: Crop Catalog
+### Phase 2: Crop Catalog - Complete
 
 - Done: Moved crop data into a dedicated crop catalog module.
 - Done: Added starter crop data for common small-garden vegetables.
+- Done: Expanded the starter catalog to representative Zollinger-style Swiss organic seed categories including brassicas, alliums, roots, Asian greens, salad leaves, nightshades, cucurbits, and herbs.
 - Done: Defined spacing, family, water need, sun need, companion rules, and avoid rules.
 - Done: Added projected yield estimates.
 - Done: Added garden value factors including flavor gain, freshness, market price, availability, rarity, space efficiency, and storage value.
@@ -316,10 +317,11 @@ Deferred setup items:
 - Done: Crop placement rectangle sizes now derive from spacing requirements in centimeters.
 - Done: Small crops can be grouped into multi-plant blocks.
 - Done: Resizing a crop block updates its row/column grid and plant count.
-- Remaining: Add stronger crop data source/verification workflow.
-- Remaining: Improve crop picker filters for season, Swiss/local suitability, crop category, and user preferences.
-- Remaining: Let the user override practical garden value for crops they simply want to grow.
-- Remaining: Improve analysis warnings and suggestions from actual placed area, unused space, and path/access conflicts.
+- Done: Added crop picker filters for category, planting season, sun, water, small-garden fit, and high garden value.
+- Deferred polish: Add stronger crop data source/verification workflow.
+- Deferred polish: Add Swiss/local suitability and user preference filters once the crop source workflow is stronger.
+- Deferred polish: Let the user override practical garden value for crops they simply want to grow.
+- Deferred polish: Improve analysis warnings and suggestions from actual placed area, unused space, and path/access conflicts.
 
 ### Phase 3: Placement Planner
 
@@ -327,9 +329,22 @@ Deferred setup items:
 - Done: Generate initial vegetable placements.
 - Done: Explain why each crop was placed.
 - Done: Detect sun mismatch, bad companions, good companions, and crop overlap with path/access zones.
+- Done: Detect spacing conflicts between overlapping independent crop blocks.
+- Done: Added a 10 cm crop placement grid inside beds and snapped crop move/resize operations to it.
+- Done: Added first interplanting mode with basil-inside-tomato host rules and plant clearance checks.
+- Done: Moved placement mode choice into the Crops panel so users choose standalone/interplant/border before layout suggestions.
+- Done: Added per-crop add/delete block controls so one selected crop can have multiple separate placement blocks.
+- Done: Let the placement algorithm resize, add, or delete unlocked crop blocks based on selected crop intent while preserving locked blocks.
+- Done: Improved optimizer placement search to avoid crop overlaps, path/access overlaps, and bad companion beds when alternatives exist.
+- Done: Added household-size scaling so some/normal/lots crop intent can be rated for the number of people to feed.
+- Done: Added soft-path edge tolerance and optimizer choice between one large block or multiple smaller blocks for the same crop target.
+- Done: Added Auto placement preference so the optimizer can choose valid interplanting, starting with basil inside tomato blocks.
 - In progress: Turn analysis findings into stronger layout suggestions and automatic alternatives.
-- Remaining: Detect spacing conflicts between independent crop blocks.
-- Add explicit interplanting rules so companion crops can overlap only when allowed and when individual plant positions fit.
+- Remaining: Expand optimizer decisions to use yield targets and more complete space management, not only selected crop intent.
+- Remaining: Add succession planting support so a crop block can be harvested or removed during the season and replaced by a follow-up crop in the same space.
+- Remaining: Store placement timing with planned start, planting, harvest, removal, and replacement windows.
+- Remaining: Show time-aware layout conflicts so two crops can use the same bed area only when their active periods do not overlap.
+- Remaining: Expand explicit interplanting rules beyond basil and tomato.
 
 ### Phase 4: Manual Editing
 
@@ -344,6 +359,7 @@ Deferred setup items:
 - Show positive and negative companion relationships.
 - Support optional companion crops.
 - Support interplanting modes such as basil inside tomato spacing and border plantings where rules allow them.
+- Keep tomato selection split into cherry, medium, and large meaty types so placement and yield estimates match the intended harvest.
 
 ### Phase 6: Weather-Aware Watering
 

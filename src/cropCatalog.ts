@@ -1,5 +1,7 @@
 export type CropId =
+  | "tomatoCherry"
   | "tomato"
+  | "tomatoBeefsteak"
   | "basil"
   | "carrot"
   | "lettuce"
@@ -10,7 +12,22 @@ export type CropId =
   | "radish"
   | "chard"
   | "parsley"
-  | "potato";
+  | "potato"
+  | "arugula"
+  | "cornSalad"
+  | "pakChoi"
+  | "daikon"
+  | "kohlrabi"
+  | "kale"
+  | "leek"
+  | "onion"
+  | "beetroot"
+  | "parsnip"
+  | "broccoli"
+  | "fennel"
+  | "eggplant"
+  | "pepper"
+  | "winterSquash";
 
 export type CropPriority = "must" | "nice" | "optional";
 export type CropIntent = "some" | "normal" | "lots";
@@ -66,6 +83,7 @@ export type CropRequest = {
   cropId: CropId;
   priority: CropPriority;
   intent: CropIntent;
+  placementMode?: "auto" | "standalone" | "interplant" | "border";
 };
 
 export type AdditionalCropSuggestion = {
@@ -74,10 +92,59 @@ export type AdditionalCropSuggestion = {
   reasons: string[];
 };
 
+export type CropSeasonFilter = "all" | "spring" | "summer" | "autumn";
+
+export type CropCatalogFilters = {
+  search: string;
+  category: string;
+  sun: "all" | Crop["sun"];
+  water: "all" | Crop["water"];
+  suitability: "all" | Crop["smallGardenSuitability"];
+  season: CropSeasonFilter;
+  highValueOnly: boolean;
+};
+
+export const tomatoCropIds: CropId[] = ["tomatoCherry", "tomato", "tomatoBeefsteak"];
+
 export const crops: Crop[] = [
   {
+    id: "tomatoCherry",
+    name: "Tomato, cherry",
+    latinName: "Solanum lycopersicum var. cerasiforme",
+    category: "Fruit vegetable",
+    family: "Nightshade",
+    water: "high",
+    sun: "full",
+    color: "#e85d42",
+    spacingCm: { inRow: 45, betweenRows: 60 },
+    spacingSource: "Starter catalog: compact staked cherry tomato spacing.",
+    yieldEstimate: {
+      amount: 3,
+      unit: "kg",
+      basis: "perPlant",
+      range: { low: 1.5, high: 4 },
+      source: "Starter estimate for productive cherry tomatoes.",
+    },
+    gardenValue: {
+      flavorGain: 5,
+      marketPrice: 5,
+      freshnessImportance: 5,
+      availability: 3,
+      rarity: 4,
+      spaceEfficiency: 5,
+      storageValue: 1,
+    },
+    swissSuitability: "good",
+    smallGardenSuitability: "excellent",
+    plantingWindow: "Transplant after frost, usually May",
+    harvestWindow: "July to October",
+    tags: ["high-value", "flavor", "cherry", "snack", "needs-support"],
+    companions: ["basil", "carrot", "lettuce", "parsley"],
+    avoid: ["cabbage", "potato"],
+  },
+  {
     id: "tomato",
-    name: "Tomato",
+    name: "Tomato, medium",
     latinName: "Solanum lycopersicum",
     category: "Fruit vegetable",
     family: "Nightshade",
@@ -106,7 +173,42 @@ export const crops: Crop[] = [
     smallGardenSuitability: "excellent",
     plantingWindow: "Transplant after frost, usually May",
     harvestWindow: "July to October",
-    tags: ["high-value", "flavor", "heirloom", "needs-support"],
+    tags: ["high-value", "flavor", "medium", "heirloom", "needs-support"],
+    companions: ["basil", "carrot", "lettuce", "parsley"],
+    avoid: ["cabbage", "potato"],
+  },
+  {
+    id: "tomatoBeefsteak",
+    name: "Tomato, large meaty",
+    latinName: "Solanum lycopersicum",
+    category: "Fruit vegetable",
+    family: "Nightshade",
+    water: "high",
+    sun: "full",
+    color: "#c94135",
+    spacingCm: { inRow: 70, betweenRows: 70 },
+    spacingSource: "Starter catalog: larger staked beefsteak tomato spacing.",
+    yieldEstimate: {
+      amount: 4,
+      unit: "kg",
+      basis: "perPlant",
+      range: { low: 2, high: 6 },
+      source: "Starter estimate for large-fruited garden tomatoes.",
+    },
+    gardenValue: {
+      flavorGain: 5,
+      marketPrice: 5,
+      freshnessImportance: 5,
+      availability: 4,
+      rarity: 5,
+      spaceEfficiency: 3,
+      storageValue: 2,
+    },
+    swissSuitability: "good",
+    smallGardenSuitability: "good",
+    plantingWindow: "Transplant after frost, usually May",
+    harvestWindow: "July to October",
+    tags: ["high-value", "flavor", "large-fruit", "beefsteak", "needs-support"],
     companions: ["basil", "carrot", "lettuce", "parsley"],
     avoid: ["cabbage", "potato"],
   },
@@ -142,7 +244,7 @@ export const crops: Crop[] = [
     plantingWindow: "May to July",
     harvestWindow: "June to September",
     tags: ["high-value", "herb", "space-efficient", "interplant"],
-    companions: ["tomato"],
+    companions: tomatoCropIds,
     avoid: [],
   },
   {
@@ -177,7 +279,7 @@ export const crops: Crop[] = [
     plantingWindow: "March to July",
     harvestWindow: "June to November",
     tags: ["direct-sow", "storage", "succession"],
-    companions: ["tomato", "lettuce", "bean"],
+    companions: [...tomatoCropIds, "lettuce", "bean"],
     avoid: [],
   },
   {
@@ -212,7 +314,7 @@ export const crops: Crop[] = [
     plantingWindow: "March to August",
     harvestWindow: "April to October",
     tags: ["quick", "succession", "space-efficient"],
-    companions: ["carrot", "tomato", "radish"],
+    companions: ["carrot", ...tomatoCropIds, "radish"],
     avoid: [],
   },
   {
@@ -282,7 +384,7 @@ export const crops: Crop[] = [
     harvestWindow: "June to November",
     tags: ["storage", "space-hungry", "rotation-sensitive"],
     companions: ["bean"],
-    avoid: ["tomato"],
+    avoid: tomatoCropIds,
   },
   {
     id: "cucumber",
@@ -456,7 +558,7 @@ export const crops: Crop[] = [
     plantingWindow: "March to July",
     harvestWindow: "May to November",
     tags: ["herb", "space-efficient", "repeat-harvest"],
-    companions: ["tomato", "chard"],
+    companions: [...tomatoCropIds, "chard"],
     avoid: [],
   },
   {
@@ -492,11 +594,587 @@ export const crops: Crop[] = [
     harvestWindow: "June to September",
     tags: ["storage", "space-hungry", "low-practical-value"],
     companions: ["bean", "cabbage"],
-    avoid: ["tomato"],
+    avoid: tomatoCropIds,
+  },
+  {
+    id: "arugula",
+    name: "Arugula",
+    latinName: "Eruca vesicaria",
+    category: "Leaf",
+    family: "Brassica",
+    water: "medium",
+    sun: "partial",
+    color: "#5c9f45",
+    spacingCm: { inRow: 5, betweenRows: 15 },
+    spacingSource: "Starter catalog: common rocket/arugula dense sowing estimate.",
+    yieldEstimate: {
+      amount: 0.8,
+      unit: "kg",
+      basis: "perSquareMeter",
+      range: { low: 0.5, high: 1.2 },
+      source: "Starter estimate for cut-and-come-again leaves.",
+    },
+    gardenValue: {
+      flavorGain: 5,
+      marketPrice: 4,
+      freshnessImportance: 5,
+      availability: 3,
+      rarity: 3,
+      spaceEfficiency: 5,
+      storageValue: 1,
+    },
+    swissSuitability: "excellent",
+    smallGardenSuitability: "excellent",
+    plantingWindow: "March to September",
+    harvestWindow: "April to November",
+    tags: ["quick", "leaf", "space-efficient", "succession"],
+    companions: ["lettuce", "radish", "carrot"],
+    avoid: [],
+  },
+  {
+    id: "cornSalad",
+    name: "Corn salad",
+    latinName: "Valerianella locusta",
+    category: "Leaf",
+    family: "Valerian",
+    water: "medium",
+    sun: "partial",
+    color: "#477b4a",
+    spacingCm: { inRow: 10, betweenRows: 15 },
+    spacingSource: "Starter catalog: common lamb's lettuce/corn salad spacing estimate.",
+    yieldEstimate: {
+      amount: 0.7,
+      unit: "kg",
+      basis: "perSquareMeter",
+      range: { low: 0.4, high: 1 },
+      source: "Starter estimate for cool-season salad leaves.",
+    },
+    gardenValue: {
+      flavorGain: 4,
+      marketPrice: 4,
+      freshnessImportance: 5,
+      availability: 3,
+      rarity: 3,
+      spaceEfficiency: 5,
+      storageValue: 1,
+    },
+    swissSuitability: "excellent",
+    smallGardenSuitability: "excellent",
+    plantingWindow: "August to October",
+    harvestWindow: "October to March",
+    tags: ["winter", "leaf", "space-efficient", "cool-season"],
+    companions: ["carrot", "leek", "radish"],
+    avoid: [],
+  },
+  {
+    id: "pakChoi",
+    name: "Pak choi",
+    latinName: "Brassica rapa subsp. chinensis",
+    category: "Asian green",
+    family: "Brassica",
+    water: "medium",
+    sun: "partial",
+    color: "#6fa64b",
+    spacingCm: { inRow: 25, betweenRows: 30 },
+    spacingSource: "Starter catalog: compact Asian green spacing estimate.",
+    yieldEstimate: {
+      amount: 8,
+      unit: "heads",
+      basis: "perSquareMeter",
+      range: { low: 6, high: 10 },
+      source: "Starter estimate for baby to medium pak choi.",
+    },
+    gardenValue: {
+      flavorGain: 4,
+      marketPrice: 4,
+      freshnessImportance: 5,
+      availability: 4,
+      rarity: 4,
+      spaceEfficiency: 4,
+      storageValue: 1,
+    },
+    swissSuitability: "good",
+    smallGardenSuitability: "excellent",
+    plantingWindow: "April to May, July to September",
+    harvestWindow: "May to June, August to November",
+    tags: ["quick", "asian", "leaf", "succession"],
+    companions: ["radish", "lettuce", "bean"],
+    avoid: [],
+  },
+  {
+    id: "daikon",
+    name: "Daikon radish",
+    latinName: "Raphanus sativus var. longipinnatus",
+    category: "Root",
+    family: "Brassica",
+    water: "medium",
+    sun: "full",
+    color: "#d8ddd1",
+    spacingCm: { inRow: 15, betweenRows: 30 },
+    spacingSource: "Starter catalog: Asian radish spacing estimate.",
+    yieldEstimate: {
+      amount: 4,
+      unit: "kg",
+      basis: "perSquareMeter",
+      range: { low: 2.5, high: 5 },
+      source: "Starter estimate for long radish roots.",
+    },
+    gardenValue: {
+      flavorGain: 3,
+      marketPrice: 3,
+      freshnessImportance: 3,
+      availability: 4,
+      rarity: 4,
+      spaceEfficiency: 4,
+      storageValue: 3,
+    },
+    swissSuitability: "good",
+    smallGardenSuitability: "good",
+    plantingWindow: "July to September",
+    harvestWindow: "September to November",
+    tags: ["root", "asian", "autumn", "storage"],
+    companions: ["lettuce", "bean", "pakChoi"],
+    avoid: [],
+  },
+  {
+    id: "kohlrabi",
+    name: "Kohlrabi",
+    latinName: "Brassica oleracea var. gongylodes",
+    category: "Brassica",
+    family: "Brassica",
+    water: "medium",
+    sun: "partial",
+    color: "#9f78b8",
+    spacingCm: { inRow: 25, betweenRows: 30 },
+    spacingSource: "Starter catalog: common kohlrabi spacing estimate.",
+    yieldEstimate: {
+      amount: 1,
+      unit: "pieces",
+      basis: "perPlant",
+      source: "Starter estimate for one bulb per plant.",
+    },
+    gardenValue: {
+      flavorGain: 4,
+      marketPrice: 3,
+      freshnessImportance: 4,
+      availability: 3,
+      rarity: 3,
+      spaceEfficiency: 4,
+      storageValue: 2,
+    },
+    swissSuitability: "excellent",
+    smallGardenSuitability: "excellent",
+    plantingWindow: "March to August",
+    harvestWindow: "May to October",
+    tags: ["quick", "brassica", "space-efficient"],
+    companions: ["bean", "lettuce", "beetroot"],
+    avoid: tomatoCropIds,
+  },
+  {
+    id: "kale",
+    name: "Kale",
+    latinName: "Brassica oleracea var. sabellica",
+    category: "Brassica",
+    family: "Brassica",
+    water: "medium",
+    sun: "partial",
+    color: "#426b3f",
+    spacingCm: { inRow: 40, betweenRows: 50 },
+    spacingSource: "Starter catalog: common kale spacing estimate.",
+    yieldEstimate: {
+      amount: 0.8,
+      unit: "kg",
+      basis: "perPlant",
+      range: { low: 0.4, high: 1.2 },
+      source: "Starter estimate for repeated leaf harvest.",
+    },
+    gardenValue: {
+      flavorGain: 4,
+      marketPrice: 3,
+      freshnessImportance: 4,
+      availability: 3,
+      rarity: 4,
+      spaceEfficiency: 3,
+      storageValue: 3,
+    },
+    swissSuitability: "excellent",
+    smallGardenSuitability: "good",
+    plantingWindow: "April to July",
+    harvestWindow: "September to March",
+    tags: ["winter", "repeat-harvest", "brassica"],
+    companions: ["bean", "chard", "beetroot"],
+    avoid: tomatoCropIds,
+  },
+  {
+    id: "leek",
+    name: "Leek",
+    latinName: "Allium porrum",
+    category: "Allium",
+    family: "Allium",
+    water: "medium",
+    sun: "full",
+    color: "#6e8f68",
+    spacingCm: { inRow: 15, betweenRows: 30 },
+    spacingSource: "Starter catalog: common leek spacing estimate.",
+    yieldEstimate: {
+      amount: 3,
+      unit: "kg",
+      basis: "perSquareMeter",
+      range: { low: 2, high: 4 },
+      source: "Starter estimate for medium leeks.",
+    },
+    gardenValue: {
+      flavorGain: 3,
+      marketPrice: 3,
+      freshnessImportance: 3,
+      availability: 2,
+      rarity: 3,
+      spaceEfficiency: 4,
+      storageValue: 4,
+    },
+    swissSuitability: "excellent",
+    smallGardenSuitability: "good",
+    plantingWindow: "March to May",
+    harvestWindow: "September to March",
+    tags: ["allium", "winter", "storage"],
+    companions: ["carrot", "cornSalad", "lettuce"],
+    avoid: ["bean"],
+  },
+  {
+    id: "onion",
+    name: "Onion",
+    latinName: "Allium cepa",
+    category: "Allium",
+    family: "Allium",
+    water: "medium",
+    sun: "full",
+    color: "#c6a358",
+    spacingCm: { inRow: 10, betweenRows: 25 },
+    spacingSource: "Starter catalog: common onion spacing estimate.",
+    yieldEstimate: {
+      amount: 3,
+      unit: "kg",
+      basis: "perSquareMeter",
+      range: { low: 2, high: 4 },
+      source: "Starter estimate for bulb onions.",
+    },
+    gardenValue: {
+      flavorGain: 2,
+      marketPrice: 2,
+      freshnessImportance: 2,
+      availability: 1,
+      rarity: 3,
+      spaceEfficiency: 4,
+      storageValue: 5,
+    },
+    swissSuitability: "excellent",
+    smallGardenSuitability: "good",
+    plantingWindow: "March to April",
+    harvestWindow: "July to September",
+    tags: ["allium", "storage", "low-practical-value"],
+    companions: ["carrot", "beetroot", "lettuce"],
+    avoid: ["bean"],
+  },
+  {
+    id: "beetroot",
+    name: "Beetroot",
+    latinName: "Beta vulgaris subsp. vulgaris",
+    category: "Root",
+    family: "Amaranth",
+    water: "medium",
+    sun: "full",
+    color: "#8e2f57",
+    spacingCm: { inRow: 10, betweenRows: 30 },
+    spacingSource: "Starter catalog: common beetroot spacing estimate.",
+    yieldEstimate: {
+      amount: 3,
+      unit: "kg",
+      basis: "perSquareMeter",
+      range: { low: 2, high: 4 },
+      source: "Starter estimate for beet roots.",
+    },
+    gardenValue: {
+      flavorGain: 3,
+      marketPrice: 2,
+      freshnessImportance: 3,
+      availability: 2,
+      rarity: 4,
+      spaceEfficiency: 4,
+      storageValue: 4,
+    },
+    swissSuitability: "excellent",
+    smallGardenSuitability: "good",
+    plantingWindow: "April to July",
+    harvestWindow: "July to November",
+    tags: ["root", "colorful", "storage"],
+    companions: ["onion", "kohlrabi", "lettuce"],
+    avoid: [],
+  },
+  {
+    id: "parsnip",
+    name: "Parsnip",
+    latinName: "Pastinaca sativa",
+    category: "Root",
+    family: "Umbellifer",
+    water: "medium",
+    sun: "full",
+    color: "#d8c999",
+    spacingCm: { inRow: 10, betweenRows: 35 },
+    spacingSource: "Starter catalog: common parsnip spacing estimate.",
+    yieldEstimate: {
+      amount: 3,
+      unit: "kg",
+      basis: "perSquareMeter",
+      range: { low: 2, high: 4 },
+      source: "Starter estimate for half-long parsnips.",
+    },
+    gardenValue: {
+      flavorGain: 4,
+      marketPrice: 3,
+      freshnessImportance: 3,
+      availability: 4,
+      rarity: 4,
+      spaceEfficiency: 3,
+      storageValue: 5,
+    },
+    swissSuitability: "excellent",
+    smallGardenSuitability: "good",
+    plantingWindow: "March to May",
+    harvestWindow: "October to March",
+    tags: ["root", "winter", "storage", "rare"],
+    companions: ["onion", "lettuce", "radish"],
+    avoid: [],
+  },
+  {
+    id: "broccoli",
+    name: "Broccoli",
+    latinName: "Brassica oleracea var. italica",
+    category: "Brassica",
+    family: "Brassica",
+    water: "high",
+    sun: "full",
+    color: "#3f6f45",
+    spacingCm: { inRow: 45, betweenRows: 60 },
+    spacingSource: "Starter catalog: common broccoli spacing estimate.",
+    yieldEstimate: {
+      amount: 1,
+      unit: "pieces",
+      basis: "perPlant",
+      source: "Starter estimate for one main head plus side shoots.",
+    },
+    gardenValue: {
+      flavorGain: 3,
+      marketPrice: 3,
+      freshnessImportance: 3,
+      availability: 2,
+      rarity: 3,
+      spaceEfficiency: 2,
+      storageValue: 2,
+    },
+    swissSuitability: "good",
+    smallGardenSuitability: "poor",
+    plantingWindow: "March to July",
+    harvestWindow: "June to November",
+    tags: ["brassica", "space-hungry"],
+    companions: ["bean", "beetroot"],
+    avoid: tomatoCropIds,
+  },
+  {
+    id: "fennel",
+    name: "Fennel",
+    latinName: "Foeniculum vulgare var. azoricum",
+    category: "Umbellifer",
+    family: "Umbellifer",
+    water: "medium",
+    sun: "full",
+    color: "#9ab36b",
+    spacingCm: { inRow: 25, betweenRows: 35 },
+    spacingSource: "Starter catalog: common bulb fennel spacing estimate.",
+    yieldEstimate: {
+      amount: 1,
+      unit: "pieces",
+      basis: "perPlant",
+      source: "Starter estimate for one bulb per plant.",
+    },
+    gardenValue: {
+      flavorGain: 4,
+      marketPrice: 3,
+      freshnessImportance: 4,
+      availability: 3,
+      rarity: 4,
+      spaceEfficiency: 3,
+      storageValue: 2,
+    },
+    swissSuitability: "good",
+    smallGardenSuitability: "good",
+    plantingWindow: "May to July",
+    harvestWindow: "August to October",
+    tags: ["aromatic", "specialty", "autumn"],
+    companions: ["lettuce"],
+    avoid: ["bean", ...tomatoCropIds],
+  },
+  {
+    id: "eggplant",
+    name: "Eggplant",
+    latinName: "Solanum melongena",
+    category: "Fruit vegetable",
+    family: "Nightshade",
+    water: "high",
+    sun: "full",
+    color: "#6f4f8f",
+    spacingCm: { inRow: 50, betweenRows: 60 },
+    spacingSource: "Starter catalog: compact eggplant spacing estimate.",
+    yieldEstimate: {
+      amount: 5,
+      unit: "pieces",
+      basis: "perPlant",
+      range: { low: 3, high: 8 },
+      source: "Starter estimate for warm protected garden conditions.",
+    },
+    gardenValue: {
+      flavorGain: 4,
+      marketPrice: 4,
+      freshnessImportance: 4,
+      availability: 3,
+      rarity: 5,
+      spaceEfficiency: 3,
+      storageValue: 1,
+    },
+    swissSuitability: "possible",
+    smallGardenSuitability: "good",
+    plantingWindow: "Transplant after frost, usually May",
+    harvestWindow: "July to October",
+    tags: ["warm-season", "rare", "needs-warmth"],
+    companions: ["basil", "bean"],
+    avoid: ["potato"],
+  },
+  {
+    id: "pepper",
+    name: "Pepper",
+    latinName: "Capsicum annuum",
+    category: "Fruit vegetable",
+    family: "Nightshade",
+    water: "medium",
+    sun: "full",
+    color: "#d95036",
+    spacingCm: { inRow: 40, betweenRows: 50 },
+    spacingSource: "Starter catalog: sweet/chili pepper spacing estimate.",
+    yieldEstimate: {
+      amount: 8,
+      unit: "pieces",
+      basis: "perPlant",
+      range: { low: 4, high: 15 },
+      source: "Starter estimate for sweet pepper or chili plants.",
+    },
+    gardenValue: {
+      flavorGain: 4,
+      marketPrice: 4,
+      freshnessImportance: 4,
+      availability: 3,
+      rarity: 5,
+      spaceEfficiency: 4,
+      storageValue: 2,
+    },
+    swissSuitability: "good",
+    smallGardenSuitability: "excellent",
+    plantingWindow: "Transplant after frost, usually May",
+    harvestWindow: "July to October",
+    tags: ["warm-season", "rare", "high-value"],
+    companions: ["basil", "carrot", "parsley"],
+    avoid: ["potato"],
+  },
+  {
+    id: "winterSquash",
+    name: "Winter squash",
+    latinName: "Cucurbita maxima",
+    category: "Cucurbit",
+    family: "Cucurbit",
+    water: "high",
+    sun: "full",
+    color: "#d68134",
+    spacingCm: { inRow: 90, betweenRows: 120 },
+    spacingSource: "Starter catalog: compact winter squash spacing estimate.",
+    yieldEstimate: {
+      amount: 3,
+      unit: "pieces",
+      basis: "perPlant",
+      range: { low: 1, high: 5 },
+      source: "Starter estimate for small squash or Hokkaido-type plants.",
+    },
+    gardenValue: {
+      flavorGain: 3,
+      marketPrice: 3,
+      freshnessImportance: 2,
+      availability: 3,
+      rarity: 4,
+      spaceEfficiency: 1,
+      storageValue: 5,
+    },
+    swissSuitability: "good",
+    smallGardenSuitability: "poor",
+    plantingWindow: "May to June",
+    harvestWindow: "September to October",
+    tags: ["storage", "space-hungry", "cucurbit"],
+    companions: ["bean", "radish"],
+    avoid: [],
   },
 ];
 
 export const cropById = Object.fromEntries(crops.map((crop) => [crop.id, crop])) as Record<CropId, Crop>;
+
+export function getCropCategories(catalog: Crop[] = crops) {
+  return [...new Set(catalog.map((crop) => crop.category))].sort((left, right) => left.localeCompare(right));
+}
+
+function cropMatchesSeason(crop: Crop, season: CropSeasonFilter) {
+  if (season === "all") return true;
+
+  const seasonMonths: Record<Exclude<CropSeasonFilter, "all">, string[]> = {
+    spring: ["march", "april", "may"],
+    summer: ["june", "july", "august"],
+    autumn: ["september", "october", "november"],
+  };
+  const plantingWindow = crop.plantingWindow.toLowerCase();
+
+  return seasonMonths[season].some((month) => plantingWindow.includes(month));
+}
+
+export function filterCrops(catalog: Crop[], selectedCropIds: Set<CropId>, filters: CropCatalogFilters) {
+  const normalizedSearch = filters.search.trim().toLowerCase();
+
+  return catalog
+    .filter((crop) => !selectedCropIds.has(crop.id))
+    .filter((crop) => crop.smallGardenSuitability !== "poor")
+    .filter((crop) => filters.category === "all" || crop.category === filters.category)
+    .filter((crop) => filters.sun === "all" || crop.sun === filters.sun)
+    .filter((crop) => filters.water === "all" || crop.water === filters.water)
+    .filter((crop) => filters.suitability === "all" || crop.smallGardenSuitability === filters.suitability)
+    .filter((crop) => cropMatchesSeason(crop, filters.season))
+    .filter((crop) => !filters.highValueOnly || calculateGardenValueScore(crop) >= 70)
+    .filter((crop) => {
+      if (!normalizedSearch) return true;
+
+      return [
+        crop.name,
+        crop.latinName,
+        crop.category,
+        crop.family,
+        crop.water,
+        crop.sun,
+        crop.smallGardenSuitability,
+        crop.swissSuitability,
+        crop.plantingWindow,
+        crop.harvestWindow,
+        crop.spacingSource,
+        crop.yieldEstimate.source,
+        ...crop.tags,
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(normalizedSearch);
+    })
+    .sort((left, right) => calculateGardenValueScore(right) - calculateGardenValueScore(left));
+}
 
 export function describeWater(water: Crop["water"]) {
   return water === "high" ? "High water" : water === "medium" ? "Moderate water" : "Low water";
