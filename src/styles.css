@@ -257,6 +257,19 @@ button {
   stroke-dasharray: 2 3;
 }
 
+.placement.harvested-placement rect,
+.placement.removed-placement rect {
+  stroke-dasharray: 4 4;
+}
+
+.placement.harvested-placement rect {
+  fill-opacity: 0.32;
+}
+
+.placement.removed-placement rect {
+  fill-opacity: 0.18;
+}
+
 .placement-icon {
   fill: #fffdf7;
   font-size: 16px;
@@ -684,6 +697,12 @@ input:disabled,
 
 .placement-mode-grid {
   display: grid;
+  gap: 10px;
+}
+
+.placement-timing-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
 

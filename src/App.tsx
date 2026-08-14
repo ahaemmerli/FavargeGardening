@@ -71,6 +71,7 @@ import {
   normalizePeopleCount,
   optimizePlacementsForRequests,
   type Placement,
+  type PlacementStatus,
 } from "./planner";
 
 const storageKey = "favarge-gardening-plan-v1";
@@ -104,6 +105,15 @@ function loadPlacements() {
         mode: placement.mode === "interplant" || placement.mode === "border" ? placement.mode : "standalone",
         hostPlacementId:
           typeof placement.hostPlacementId === "string" ? placement.hostPlacementId : undefined,
+        status:
+          placement.status === "planted" || placement.status === "harvested" || placement.status === "removed"
+            ? placement.status
+            : "planned",
+        plannedStartDate:
+          typeof placement.plannedStartDate === "string" ? placement.plannedStartDate : undefined,
+        plantedDate: typeof placement.plantedDate === "string" ? placement.plantedDate : undefined,
+        harvestDate: typeof placement.harvestDate === "string" ? placement.harvestDate : undefined,
+        removedDate: typeof placement.removedDate === "string" ? placement.removedDate : undefined,
         plantCount: placement.plantCount ?? 1,
         columns: placement.columns ?? 1,
         rows: placement.rows ?? 1,
@@ -372,6 +382,24 @@ export function App() {
               hostPlacementId: hostPlacementId || undefined,
             }
           : placement,
+      ),
+    );
+  }
+
+  function updatePlacementStatus(id: string, status: PlacementStatus) {
+    setPlacements((current) =>
+      current.map((placement) => (placement.id === id ? { ...placement, status } : placement)),
+    );
+  }
+
+  function updatePlacementDate(
+    id: string,
+    key: "plannedStartDate" | "plantedDate" | "harvestDate" | "removedDate",
+    value: string,
+  ) {
+    setPlacements((current) =>
+      current.map((placement) =>
+        placement.id === id ? { ...placement, [key]: value || undefined } : placement,
       ),
     );
   }
@@ -1253,6 +1281,8 @@ export function App() {
                   selected ? "selected" : "",
                   placement.mode === "interplant" ? "interplant-placement" : "",
                   placement.mode === "border" ? "border-placement" : "",
+                  placement.status === "harvested" ? "harvested-placement" : "",
+                  placement.status === "removed" ? "removed-placement" : "",
                 ]
                   .filter(Boolean)
                   .join(" ")}
@@ -1974,6 +2004,46 @@ export function App() {
                         blocks.
                       </p>
                     ) : null}
+                  </div>
+                  <div className="placement-timing-grid">
+                    <label className="field-label">
+                      Status
+                      <select
+                        value={selectedPlacement.status ?? "planned"}
+                        disabled={selectedPlacement.locked}
+                        onChange={(event) =>
+                          updatePlacementStatus(
+                            selectedPlacement.id,
+                            event.currentTarget.value as PlacementStatus,
+                          )
+                        }
+                      >
+                        <option value="planned">Planned</option>
+                        <option value="planted">Planted</option>
+                        <option value="harvested">Harvested</option>
+                        <option value="removed">Removed</option>
+                      </select>
+                    </label>
+                    {(
+                      [
+                        ["plannedStartDate", "Planned start"],
+                        ["plantedDate", "Planted"],
+                        ["harvestDate", "Harvest"],
+                        ["removedDate", "Removed"],
+                      ] as const
+                    ).map(([key, label]) => (
+                      <label className="field-label" key={key}>
+                        {label}
+                        <input
+                          type="date"
+                          value={selectedPlacement[key] ?? ""}
+                          disabled={selectedPlacement.locked}
+                          onChange={(event) =>
+                            updatePlacementDate(selectedPlacement.id, key, event.currentTarget.value)
+                          }
+                        />
+                      </label>
+                    ))}
                   </div>
                   <p>Projected yield from this block: {describePlacementYield(selectedPlacement)}.</p>
                   <p>{selectedPlacement.reason}</p>

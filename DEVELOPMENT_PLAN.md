@@ -339,11 +339,13 @@ Deferred setup items:
 - Done: Added household-size scaling so some/normal/lots crop intent can be rated for the number of people to feed.
 - Done: Added soft-path edge tolerance and optimizer choice between one large block or multiple smaller blocks for the same crop target.
 - Done: Added Auto placement preference so the optimizer can choose valid interplanting, starting with basil inside tomato blocks.
+- Done: Added placement status and active date windows for planned, planted, harvested, and removed crop blocks.
+- Done: Made crop overlap and companion analysis time-aware so follow-up crops can reuse the same bed area when active windows do not overlap.
+- Done: Preserved harvested/removed placement history when re-running layout suggestions.
 - In progress: Turn analysis findings into stronger layout suggestions and automatic alternatives.
 - Remaining: Expand optimizer decisions to use yield targets and more complete space management, not only selected crop intent.
-- Remaining: Add succession planting support so a crop block can be harvested or removed during the season and replaced by a follow-up crop in the same space.
-- Remaining: Store placement timing with planned start, planting, harvest, removal, and replacement windows.
-- Remaining: Show time-aware layout conflicts so two crops can use the same bed area only when their active periods do not overlap.
+- Remaining: Add a clearer succession workflow for choosing a harvested block and creating a follow-up crop in the same space.
+- Remaining: Add crop-catalog default timing windows so planned start and harvest dates can be suggested automatically.
 - Remaining: Expand explicit interplanting rules beyond basil and tomato.
 
 ### Phase 4: Manual Editing

@@ -14,6 +14,7 @@ export { cropById } from "./cropCatalog";
 export type { Crop, CropId, CropRequest } from "./cropCatalog";
 
 export type PlacementMode = "standalone" | "interplant" | "border";
+export type PlacementStatus = "planned" | "planted" | "harvested" | "removed";
 
 export type Placement = {
   id: string;
@@ -21,6 +22,11 @@ export type Placement = {
   bedId: string;
   mode?: PlacementMode;
   hostPlacementId?: string;
+  status?: PlacementStatus;
+  plannedStartDate?: string;
+  plantedDate?: string;
+  harvestDate?: string;
+  removedDate?: string;
   plantCount: number;
   columns: number;
   rows: number;
@@ -81,6 +87,36 @@ function placementOverlapsZone(placement: Placement, zone: AccessZone) {
 
 function getPlacementMode(placement: Placement): PlacementMode {
   return placement.mode ?? "standalone";
+}
+
+function getPlacementStatus(placement: Placement): PlacementStatus {
+  return placement.status ?? "planned";
+}
+
+function isHistoricalPlacement(placement: Placement) {
+  const status = getPlacementStatus(placement);
+
+  return status === "harvested" || status === "removed";
+}
+
+function normalizeDateValue(value: string | undefined) {
+  return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined;
+}
+
+export function placementsOverlapInTime(left: Placement, right: Placement) {
+  const leftStatus = getPlacementStatus(left);
+  const rightStatus = getPlacementStatus(right);
+  const leftStart = normalizeDateValue(left.plantedDate) ?? normalizeDateValue(left.plannedStartDate);
+  const rightStart = normalizeDateValue(right.plantedDate) ?? normalizeDateValue(right.plannedStartDate);
+  const leftEnd = normalizeDateValue(left.removedDate) ?? normalizeDateValue(left.harvestDate);
+  const rightEnd = normalizeDateValue(right.removedDate) ?? normalizeDateValue(right.harvestDate);
+
+  if ((leftStatus === "removed" || leftStatus === "harvested") && !leftStart && !leftEnd) return false;
+  if ((rightStatus === "removed" || rightStatus === "harvested") && !rightStart && !rightEnd) return false;
+  if (leftEnd && rightStart && leftEnd <= rightStart) return false;
+  if (rightEnd && leftStart && rightEnd <= leftStart) return false;
+
+  return true;
 }
 
 function getRequestedPlacementMode(request: CropRequest): PlacementMode {
@@ -212,6 +248,7 @@ function scorePlacementCandidate(
 
   for (const placement of placed) {
     if (placement.bedId !== bed.id) continue;
+    if (!placementsOverlapInTime(candidate, placement)) continue;
 
     if (rectsOverlap(candidate, placement) && !isDeclaredInterplantPair(candidate, placement)) {
       score -= 160;
@@ -311,6 +348,7 @@ function createInterplantPlacement(
           bedId: bed.id,
           mode: "interplant",
           hostPlacementId: host.id,
+          status: "planned",
           plantCount,
           columns: layout.columns,
           rows: layout.rows,
@@ -429,7 +467,10 @@ function buildInterplantPlanForCounts(
 export function getCompanionSummary(placement: Placement, placements: Placement[]) {
   const crop = cropById[placement.cropId];
   const neighbors = placements.filter(
-    (other) => other.id !== placement.id && other.bedId === placement.bedId,
+    (other) =>
+      other.id !== placement.id &&
+      other.bedId === placement.bedId &&
+      placementsOverlapInTime(placement, other),
   );
   const good = neighbors
     .filter((other) => crop.companions.includes(other.cropId))
@@ -491,7 +532,10 @@ export function analyzePlacements(
     }
 
     const neighbors = placements.filter(
-      (other) => other.id !== placement.id && other.bedId === placement.bedId,
+      (other) =>
+        other.id !== placement.id &&
+        other.bedId === placement.bedId &&
+        placementsOverlapInTime(placement, other),
     );
     const overlappingCrops = neighbors.filter(
       (neighbor) => rectsOverlap(placement, neighbor) && !isDeclaredInterplantPair(placement, neighbor),
@@ -517,6 +561,12 @@ export function analyzePlacements(
           message: `${crop.name} is not configured as an interplant for ${cropById[host.cropId].name}.`,
         });
         score -= 35;
+      } else if (!placementsOverlapInTime(placement, host)) {
+        findings.push({
+          level: "warning",
+          message: `Interplant ${crop.name} should share an active period with ${cropById[host.cropId].name}.`,
+        });
+        score -= 18;
       } else if (!rectsOverlap(placement, host)) {
         findings.push({
           level: "warning",
@@ -656,6 +706,7 @@ export function createAdditionalPlacement(
     width,
     height,
     mode: getRequestedPlacementMode(request),
+    status: "planned",
     locked: false,
     reason: `${preferredBed.name} matches ${crop.sun} sun and starts a ${request.intent} ${crop.name.toLowerCase()} area with ${plantCount} plant${plantCount === 1 ? "" : "s"} at ${crop.spacingCm.inRow} x ${crop.spacingCm.betweenRows} cm spacing.`,
   } satisfies Placement;
@@ -672,7 +723,8 @@ export function createSuggestions(
 ) {
   const requestedCropIds = new Set(requests.map((request) => request.cropId));
   const preserved = existing.filter(
-    (placement) => placement.locked || requestedCropIds.has(placement.cropId),
+    (placement) =>
+      placement.locked || isHistoricalPlacement(placement) || requestedCropIds.has(placement.cropId),
   );
   const suggestions: Placement[] = [...preserved];
 
@@ -709,7 +761,8 @@ export function optimizePlacementsForRequests(
 
   const requestedCropIds = new Set(requests.map((request) => request.cropId));
   let optimized: Placement[] = existing.filter(
-    (placement) => placement.locked || requestedCropIds.has(placement.cropId),
+    (placement) =>
+      placement.locked || isHistoricalPlacement(placement) || requestedCropIds.has(placement.cropId),
   );
 
   for (const request of requests) {
@@ -721,7 +774,8 @@ export function optimizePlacementsForRequests(
     const remainingPlants = Math.max(0, targetPlants - lockedPlants);
 
     const basePlacements = optimized.filter(
-      (placement) => placement.cropId !== request.cropId || placement.locked,
+      (placement) =>
+        placement.cropId !== request.cropId || placement.locked || isHistoricalPlacement(placement),
     );
 
     if (remainingPlants === 0) {

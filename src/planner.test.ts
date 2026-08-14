@@ -24,6 +24,7 @@ import {
   getStarterPlantsForIntent,
   normalizePeopleCount,
   optimizePlacementsForRequests,
+  placementsOverlapInTime,
   type Placement,
 } from "./planner";
 import { beds, centimetersToSvgHeight, centimetersToSvgWidth } from "./garden";
@@ -568,6 +569,143 @@ describe("planner", () => {
     expect(lettuceScore.findings.some((finding) => finding.message.includes("Overlaps crop block"))).toBe(
       true,
     );
+  });
+
+  it("allows the same bed space for succession crops with non-overlapping active windows", () => {
+    const rightUpper = beds.find((bed) => bed.id === "right-upper")!;
+    const carrot: Placement = {
+      id: "carrot",
+      cropId: "carrot",
+      bedId: rightUpper.id,
+      status: "harvested",
+      plannedStartDate: "2026-03-01",
+      harvestDate: "2026-05-01",
+      plantCount: 12,
+      columns: 4,
+      rows: 3,
+      x: rightUpper.x + 20,
+      y: rightUpper.y + 20,
+      width: 80,
+      height: 60,
+      locked: false,
+      reason: "Spring crop.",
+    };
+    const lettuce: Placement = {
+      ...carrot,
+      id: "lettuce",
+      cropId: "lettuce",
+      status: "planned",
+      plannedStartDate: "2026-05-02",
+      harvestDate: "2026-06-15",
+      reason: "Follow-up crop.",
+    };
+
+    const analysis = analyzePlacements([carrot, lettuce], beds, []);
+
+    expect(placementsOverlapInTime(carrot, lettuce)).toBe(false);
+    expect(analysis.findings.some((finding) => finding.message.includes("Overlaps crop block"))).toBe(false);
+  });
+
+  it("keeps overlap errors when succession crop active windows overlap", () => {
+    const rightUpper = beds.find((bed) => bed.id === "right-upper")!;
+    const carrot: Placement = {
+      id: "carrot",
+      cropId: "carrot",
+      bedId: rightUpper.id,
+      status: "planted",
+      plantedDate: "2026-03-01",
+      harvestDate: "2026-06-01",
+      plantCount: 12,
+      columns: 4,
+      rows: 3,
+      x: rightUpper.x + 20,
+      y: rightUpper.y + 20,
+      width: 80,
+      height: 60,
+      locked: false,
+      reason: "Spring crop.",
+    };
+    const lettuce: Placement = {
+      ...carrot,
+      id: "lettuce",
+      cropId: "lettuce",
+      status: "planned",
+      plannedStartDate: "2026-05-15",
+      harvestDate: "2026-06-15",
+      reason: "Follow-up crop.",
+    };
+
+    const analysis = analyzePlacements([carrot, lettuce], beds, []);
+
+    expect(placementsOverlapInTime(carrot, lettuce)).toBe(true);
+    expect(analysis.findings.some((finding) => finding.message.includes("Overlaps crop block"))).toBe(true);
+  });
+
+  it("ignores completed undated blocks for active crop conflicts", () => {
+    const rightUpper = beds.find((bed) => bed.id === "right-upper")!;
+    const removedCarrot: Placement = {
+      id: "carrot",
+      cropId: "carrot",
+      bedId: rightUpper.id,
+      status: "removed",
+      plantCount: 12,
+      columns: 4,
+      rows: 3,
+      x: rightUpper.x + 20,
+      y: rightUpper.y + 20,
+      width: 80,
+      height: 60,
+      locked: false,
+      reason: "Removed crop.",
+    };
+    const lettuce: Placement = {
+      ...removedCarrot,
+      id: "lettuce",
+      cropId: "lettuce",
+      status: "planned",
+      reason: "Replacement crop.",
+    };
+
+    const analysis = analyzePlacements([removedCarrot, lettuce], beds, []);
+
+    expect(placementsOverlapInTime(removedCarrot, lettuce)).toBe(false);
+    expect(analysis.findings.some((finding) => finding.message.includes("Overlaps crop block"))).toBe(false);
+  });
+
+  it("does not report companion conflicts for crops in different active windows", () => {
+    const rightUpper = beds.find((bed) => bed.id === "right-upper")!;
+    const tomato: Placement = {
+      id: "tomato",
+      cropId: "tomato",
+      bedId: rightUpper.id,
+      status: "harvested",
+      plannedStartDate: "2026-04-01",
+      harvestDate: "2026-07-01",
+      plantCount: 1,
+      columns: 1,
+      rows: 1,
+      x: rightUpper.x + 20,
+      y: rightUpper.y + 20,
+      width: 80,
+      height: 60,
+      locked: false,
+      reason: "Early tomato.",
+    };
+    const cabbage: Placement = {
+      ...tomato,
+      id: "cabbage",
+      cropId: "cabbage",
+      status: "planned",
+      plannedStartDate: "2026-07-02",
+      harvestDate: "2026-10-01",
+      x: tomato.x + 90,
+      reason: "Late cabbage.",
+    };
+
+    const analysis = analyzePlacements([tomato, cabbage], beds, []);
+
+    expect(getCompanionSummary(tomato, [tomato, cabbage])).toBe("No companion conflict");
+    expect(analysis.findings.some((finding) => finding.message.includes("Avoid near"))).toBe(false);
   });
 
   it("allows declared basil interplanting inside tomato blocks when plant clearance is sufficient", () => {
