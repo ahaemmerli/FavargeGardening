@@ -39,6 +39,7 @@ Favarge Gardening is a garden planning app for Switzerland-based growing seasons
    - Use MeteoSwiss data for temperature, precipitation, sunlight / radiation, and local forecasts, and season temperature statistics.
    - Convert weather and crop data into practical watering recommendations.
    - Convert weather statistics and local forecast into real-time planting dates recommendation
+   - Maintain a task timeplan/calendar for seedling preparation, direct sowing, transplanting, bed preparation, watering, harvesting, crop removal, and replacement planting.
    - Track completed watering and garden tasks.
 
 7. Rotation planning
@@ -91,6 +92,7 @@ The app should keep the planning engine separate from the UI:
 - `garden-model`: beds, zones, dimensions, locked placements.
 - `crop-catalog`: vegetables, spacing, families, companions, water needs.
 - `planner-engine`: scoring, constraints, suggestions, explanations.
+- `task-calendar`: dated garden tasks generated from crop plans, placement timing, weather rules, and user-confirmed actions.
 - `weather-service`: MeteoSwiss adapter and cached weather summaries.
 - `rotation-service`: historical family occupancy and next-season recommendations.
 
@@ -150,10 +152,28 @@ Placement:
 - plant count
 - placement mode: standalone, interplant, border
 - optional host placement id
+- status: planned, planted, harvested, removed
+- planned start date
+- planted date
+- harvest date
+- removed date
 - locked
 - season
 - year
 - notes
+
+Garden Task:
+
+- id
+- type: prepare seedlings, direct sow, transplant, bed preparation, water, harvest, remove crop, plant replacement
+- linked crop id
+- linked placement id
+- due date
+- optional date window
+- status: planned, due, done, skipped
+- priority
+- notes
+- generated reason
 
 Irrigation Component:
 
@@ -339,12 +359,14 @@ Deferred setup items:
 - Done: Added household-size scaling so some/normal/lots crop intent can be rated for the number of people to feed.
 - Done: Added soft-path edge tolerance and optimizer choice between one large block or multiple smaller blocks for the same crop target.
 - Done: Added Auto placement preference so the optimizer can choose valid interplanting, starting with basil inside tomato blocks.
+- Done: Made Auto placement prefer interplanting as many compatible plants as possible before using standalone overflow blocks.
 - Done: Added placement status and active date windows for planned, planted, harvested, and removed crop blocks.
 - Done: Made crop overlap and companion analysis time-aware so follow-up crops can reuse the same bed area when active windows do not overlap.
 - Done: Preserved harvested/removed placement history when re-running layout suggestions.
+- Done: Added a first replacement workflow for choosing a follow-up crop from a harvested/removed block and creating a planned block in the same bed area.
+- Done: Added a first task manager that generates dated bed prep, seedling/direct-sow/transplant, harvest, removal, and replacement tasks from crop placement dates.
 - In progress: Turn analysis findings into stronger layout suggestions and automatic alternatives.
 - Remaining: Expand optimizer decisions to use yield targets and more complete space management, not only selected crop intent.
-- Remaining: Add a clearer succession workflow for choosing a harvested block and creating a follow-up crop in the same space.
 - Remaining: Add crop-catalog default timing windows so planned start and harvest dates can be suggested automatically.
 - Remaining: Expand explicit interplanting rules beyond basil and tomato.
 
@@ -363,8 +385,14 @@ Deferred setup items:
 - Support interplanting modes such as basil inside tomato spacing and border plantings where rules allow them.
 - Keep tomato selection split into cherry, medium, and large meaty types so placement and yield estimates match the intended harvest.
 
-### Phase 6: Weather-Aware Watering
+### Phase 6: Task Calendar and Weather-Aware Care
 
+- Done: Generate first task calendar entries from placement timing and succession/replacement decisions.
+- Done: Show upcoming garden work in a task manager tab.
+- Done: Let the user mark generated tasks planned, done, or skipped.
+- Done: Create seedling prep, direct sowing, transplanting, bed preparation, harvest, crop removal, and replacement planting tasks when dates exist.
+- Remaining: Show task groups by week and by bed.
+- Remaining: Let the user manually add, edit, and reschedule tasks.
 - Build MeteoSwiss data adapter.
 - Cache weather data locally.
 - Create daily watering recommendations by bed and crop.

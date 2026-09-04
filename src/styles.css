@@ -313,7 +313,7 @@ button {
 
 .sidebar-tabs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 4px;
   position: sticky;
   top: 0;
@@ -428,7 +428,8 @@ button {
 
 .crop-picker,
 .recommendation-list,
-.analysis-list {
+.analysis-list,
+.task-list {
   display: grid;
   gap: 10px;
   padding: 10px;
@@ -506,6 +507,99 @@ button {
 
 .analysis-row {
   cursor: default;
+}
+
+.task-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.task-summary div {
+  display: grid;
+  gap: 2px;
+  padding: 10px;
+  border: 1px solid #ddd8c8;
+  border-radius: 8px;
+  background: #fffdf7;
+}
+
+.task-summary strong {
+  color: #24382b;
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.task-summary span {
+  color: #687063;
+  font-size: 0.75rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.task-row {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #ddd8c8;
+  border-left: 5px solid #87917f;
+  border-radius: 7px;
+  background: #fffdf7;
+}
+
+.task-row.high-priority {
+  border-left-color: #31505b;
+}
+
+.task-row.overdue {
+  border-left-color: #9c3d34;
+  background: #fff8f4;
+}
+
+.task-row.done {
+  opacity: 0.74;
+}
+
+.task-row.skipped {
+  border-left-color: #9a6a24;
+  opacity: 0.72;
+}
+
+.task-row strong {
+  display: block;
+  line-height: 1.2;
+}
+
+.task-row span {
+  display: block;
+  margin-top: 3px;
+  color: #687063;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.task-row p {
+  margin: 6px 0 0;
+  color: #425044;
+  font-size: 0.84rem;
+  line-height: 1.35;
+}
+
+.task-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.task-controls select {
+  min-height: 36px;
+  border: 1px solid #cfc8b8;
+  border-radius: 7px;
+  background: #fffdf7;
+  color: #223027;
+  font: inherit;
+  padding: 0 8px;
 }
 
 .score-summary {
@@ -655,6 +749,12 @@ button {
   color: #263128;
 }
 
+.compact-action {
+  min-height: 36px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
 button:disabled,
 input:disabled,
 .file-button.disabled {
@@ -704,6 +804,15 @@ input:disabled,
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+
+.replacement-panel {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #d8d1bd;
+  border-radius: 7px;
+  background: #f4f0e5;
 }
 
 .field-label {

@@ -402,13 +402,16 @@ function comparePlacementPlans(
   const rightWarnings = rightAnalysis.findings.filter((finding) => finding.level === "warning").length;
 
   if (leftErrors !== rightErrors) return leftErrors < rightErrors ? left : right;
+  const leftInterplants = left
+    .filter((placement) => getPlacementMode(placement) === "interplant")
+    .reduce((total, placement) => total + placement.plantCount, 0);
+  const rightInterplants = right
+    .filter((placement) => getPlacementMode(placement) === "interplant")
+    .reduce((total, placement) => total + placement.plantCount, 0);
+  if (leftInterplants !== rightInterplants) return leftInterplants > rightInterplants ? left : right;
   if (leftWarnings !== rightWarnings) return leftWarnings < rightWarnings ? left : right;
   if (leftAnalysis.score !== rightAnalysis.score)
     return leftAnalysis.score > rightAnalysis.score ? left : right;
-
-  const leftInterplants = left.filter((placement) => getPlacementMode(placement) === "interplant").length;
-  const rightInterplants = right.filter((placement) => getPlacementMode(placement) === "interplant").length;
-  if (leftInterplants !== rightInterplants) return leftInterplants > rightInterplants ? left : right;
 
   return left.length <= right.length ? left : right;
 }
@@ -462,6 +465,83 @@ function buildInterplantPlanForCounts(
   }
 
   return planned;
+}
+
+function placementHasError(
+  placementId: string,
+  placements: Placement[],
+  gardenBeds: Bed[],
+  accessZones: AccessZone[],
+) {
+  const analysis = analyzePlacements(placements, gardenBeds, accessZones).placements.find(
+    (placement) => placement.placementId === placementId,
+  );
+
+  return analysis?.findings.some((finding) => finding.level === "error") ?? true;
+}
+
+function buildAutoInterplantPlanForCounts(
+  request: CropRequest,
+  basePlacements: Placement[],
+  plantCounts: number[],
+  idSeed: number,
+  gardenBeds: Bed[],
+  accessZones: AccessZone[],
+) {
+  const planned = [...basePlacements];
+
+  for (const plantCount of plantCounts) {
+    const interplantPlacement = createInterplantPlacement(
+      request,
+      planned,
+      idSeed,
+      gardenBeds,
+      accessZones,
+      plantCount,
+    );
+
+    if (interplantPlacement) {
+      const interplantPlan = [...planned, interplantPlacement];
+
+      if (!placementHasError(interplantPlacement.id, interplantPlan, gardenBeds, accessZones)) {
+        planned.push(interplantPlacement);
+        continue;
+      }
+    }
+
+    const standalonePlacement = createAdditionalPlacement(
+      request,
+      planned,
+      idSeed,
+      gardenBeds,
+      plantCount,
+      accessZones,
+    );
+    if (standalonePlacement) planned.push(standalonePlacement);
+  }
+
+  return planned;
+}
+
+function getRequestPlanningOrder(requests: CropRequest[]) {
+  return [...requests].sort((left, right) => {
+    const leftCanHost = requests.some(
+      (request) => allowsAutomaticInterplanting(request) && canInterplant(request.cropId, left.cropId),
+    );
+    const rightCanHost = requests.some(
+      (request) => allowsAutomaticInterplanting(request) && canInterplant(request.cropId, right.cropId),
+    );
+    const leftNeedsHost = allowsAutomaticInterplanting(left)
+      ? requests.some((request) => canInterplant(left.cropId, request.cropId))
+      : false;
+    const rightNeedsHost = allowsAutomaticInterplanting(right)
+      ? requests.some((request) => canInterplant(right.cropId, request.cropId))
+      : false;
+    const leftScore = (leftCanHost ? 2 : 0) - (leftNeedsHost ? 1 : 0);
+    const rightScore = (rightCanHost ? 2 : 0) - (rightNeedsHost ? 1 : 0);
+
+    return rightScore - leftScore;
+  });
 }
 
 export function getCompanionSummary(placement: Placement, placements: Placement[]) {
@@ -714,6 +794,44 @@ export function createAdditionalPlacement(
   return placeBlockOnBestGridPosition(placement, existing, gardenBeds, accessZones);
 }
 
+export function createReplacementPlacement(
+  source: Placement,
+  cropId: CropId,
+  idSeed = Date.now(),
+  gardenBeds = beds,
+  plannedStartDate?: string,
+) {
+  const bed = gardenBeds.find((candidate) => candidate.id === source.bedId);
+  if (!bed) return undefined;
+
+  const crop = cropById[cropId];
+  const layout = getBlockLayoutFromSize(crop, bed, source.width, source.height);
+  const sourceCrop = cropById[source.cropId];
+
+  return {
+    id: `${cropId}-replacement-${idSeed}`,
+    cropId,
+    bedId: source.bedId,
+    mode: "standalone",
+    status: "planned",
+    plannedStartDate:
+      plannedStartDate ??
+      source.removedDate ??
+      source.harvestDate ??
+      source.plantedDate ??
+      source.plannedStartDate,
+    plantCount: layout.plantCount,
+    columns: layout.columns,
+    rows: layout.rows,
+    x: source.x,
+    y: source.y,
+    width: source.width,
+    height: source.height,
+    locked: false,
+    reason: `${crop.name} replaces harvested ${sourceCrop.name} in the same bed area, with ${layout.plantCount} plant${layout.plantCount === 1 ? "" : "s"} fitted from ${crop.spacingCm.inRow} x ${crop.spacingCm.betweenRows} cm spacing.`,
+  } satisfies Placement;
+}
+
 export function createSuggestions(
   requests: CropRequest[],
   existing: Placement[],
@@ -730,7 +848,7 @@ export function createSuggestions(
 
   if (gardenBeds.length === 0) return suggestions;
 
-  for (const request of requests) {
+  for (const request of getRequestPlanningOrder(requests)) {
     const { cropId } = request;
     if (suggestions.some((placement) => placement.cropId === cropId)) continue;
 
@@ -765,7 +883,7 @@ export function optimizePlacementsForRequests(
       placement.locked || isHistoricalPlacement(placement) || requestedCropIds.has(placement.cropId),
   );
 
-  for (const request of requests) {
+  for (const request of getRequestPlanningOrder(requests)) {
     const crop = cropById[request.cropId];
     const targetPlants = getStarterPlantsForIntent(crop, request.intent, peopleCount);
     const lockedPlants = optimized
@@ -798,18 +916,30 @@ export function optimizePlacementsForRequests(
         ? buildPlacementPlanForCounts(request, basePlacements, splitCounts, idSeed, gardenBeds, accessZones)
         : singleBlockPlan;
     const interplantCounts = splitPlantCounts(remainingPlants, getDefaultPlantsPerBlock(crop));
-    const interplantPlan = allowsAutomaticInterplanting(request)
-      ? buildInterplantPlanForCounts(
-          request,
-          basePlacements,
-          interplantCounts,
-          idSeed,
-          gardenBeds,
-          accessZones,
-        )
-      : undefined;
+    const autoInterplantPlan =
+      !request.placementMode || request.placementMode === "auto"
+        ? buildAutoInterplantPlanForCounts(
+            request,
+            basePlacements,
+            interplantCounts,
+            idSeed,
+            gardenBeds,
+            accessZones,
+          )
+        : undefined;
+    const interplantPlan =
+      request.placementMode === "interplant"
+        ? buildInterplantPlanForCounts(
+            request,
+            basePlacements,
+            interplantCounts,
+            idSeed,
+            gardenBeds,
+            accessZones,
+          )
+        : undefined;
 
-    optimized = [singleBlockPlan, splitBlockPlan, interplantPlan]
+    optimized = [singleBlockPlan, splitBlockPlan, autoInterplantPlan, interplantPlan]
       .filter((plan): plan is Placement[] => Boolean(plan))
       .reduce((best, plan) => comparePlacementPlans(best, plan, gardenBeds, accessZones));
   }

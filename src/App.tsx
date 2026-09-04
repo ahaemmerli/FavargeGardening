@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUp,
+  CalendarDays,
   Droplets,
   Home,
   Lock,
@@ -64,6 +65,7 @@ import {
   analyzePlacements,
   canInterplant,
   createAdditionalPlacement,
+  createReplacementPlacement,
   getBlockLayoutFromSize,
   getCropFootprint,
   getCompanionSummary,
@@ -73,9 +75,11 @@ import {
   type Placement,
   type PlacementStatus,
 } from "./planner";
+import { generateGardenTasks, type GardenTaskOverride, type GardenTaskStatus } from "./taskCalendar";
 
 const storageKey = "favarge-gardening-plan-v1";
 const gardenStorageKey = "favarge-gardening-definition-v1";
+const taskStorageKey = "favarge-gardening-task-overrides-v1";
 
 type ActiveMapInteraction =
   | { type: "move-placement"; id: string; dx: number; dy: number }
@@ -87,7 +91,7 @@ type ActiveMapInteraction =
   | { type: "move-access-zone"; id: string; dx: number; dy: number }
   | { type: "resize-access-zone"; id: string; startX: number; startY: number };
 
-type SidebarTab = "garden" | "crops" | "analysis";
+type SidebarTab = "garden" | "crops" | "analysis" | "tasks";
 
 function loadPlacements() {
   const saved = window.localStorage.getItem(storageKey);
@@ -137,6 +141,24 @@ function loadGardenDefinition(): GardenDefinition {
   }
 }
 
+function loadTaskOverrides() {
+  const saved = window.localStorage.getItem(taskStorageKey);
+  if (!saved) return {};
+
+  try {
+    const parsed = JSON.parse(saved) as Record<string, GardenTaskOverride>;
+
+    return Object.fromEntries(
+      Object.entries(parsed).filter(
+        ([, override]) =>
+          override.status === "planned" || override.status === "done" || override.status === "skipped",
+      ),
+    );
+  } catch {
+    return {};
+  }
+}
+
 function formatCoordinate(value: number) {
   return Number(value.toFixed(2)).toString();
 }
@@ -151,6 +173,10 @@ function formatGeometryLabel(key: keyof RectGeometry) {
 
 function metersInputToSvgUnits(value: number) {
   return metersToSvgFromScale(Math.max(0, value));
+}
+
+function getTodayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
 }
 
 function formatYieldAmount(value: number) {
@@ -226,6 +252,9 @@ export function App() {
   const [viewBox, setViewBox] = React.useState(defaultGardenViewBox);
   const [gardenSaveStatus, setGardenSaveStatus] = React.useState("Saved locally");
   const [activeSidebarTab, setActiveSidebarTab] = React.useState<SidebarTab>("crops");
+  const [replacementCropId, setReplacementCropId] = React.useState<CropId>("lettuce");
+  const [taskOverrides, setTaskOverrides] =
+    React.useState<Record<string, GardenTaskOverride>>(loadTaskOverrides);
   const interactionRef = React.useRef<ActiveMapInteraction | null>(null);
 
   React.useEffect(() => {
@@ -236,6 +265,10 @@ export function App() {
     window.localStorage.setItem(gardenStorageKey, JSON.stringify(garden));
     setGardenSaveStatus("Saved locally");
   }, [garden]);
+
+  React.useEffect(() => {
+    window.localStorage.setItem(taskStorageKey, JSON.stringify(taskOverrides));
+  }, [taskOverrides]);
 
   const selectedPlacement = placements.find((placement) => placement.id === selectedId);
   const selectedBed = garden.beds.find((bed) => bed.id === selectedBedId);
@@ -249,6 +282,17 @@ export function App() {
           canInterplant(selectedPlacement.cropId, placement.cropId),
       )
     : [];
+  const replacementCropOptions = crops
+    .filter(
+      (crop) =>
+        crop.id !== selectedPlacement?.cropId &&
+        crop.smallGardenSuitability !== "poor" &&
+        (!selectedPlacement || !cropById[selectedPlacement.cropId].avoid.includes(crop.id)),
+    )
+    .sort((left, right) => calculateGardenValueScore(right) - calculateGardenValueScore(left));
+  const selectedReplacementCrop = replacementCropOptions.some((crop) => crop.id === replacementCropId)
+    ? replacementCropId
+    : replacementCropOptions[0]?.id;
 
   function addCropRequest(cropId: CropId) {
     setRequests((current) =>
@@ -402,6 +446,50 @@ export function App() {
         placement.id === id ? { ...placement, [key]: value || undefined } : placement,
       ),
     );
+  }
+
+  function updateTaskStatus(id: string, status: GardenTaskStatus) {
+    setTaskOverrides((current) => ({
+      ...current,
+      [id]: {
+        ...current[id],
+        status,
+      },
+    }));
+  }
+
+  function addReplacementForSelectedPlacement() {
+    if (!selectedPlacement || !selectedReplacementCrop) return;
+    const plannedStartDate =
+      selectedPlacement.removedDate ??
+      selectedPlacement.harvestDate ??
+      selectedPlacement.plantedDate ??
+      selectedPlacement.plannedStartDate ??
+      getTodayIsoDate();
+    const replacement = createReplacementPlacement(
+      selectedPlacement,
+      selectedReplacementCrop,
+      Date.now(),
+      garden.beds,
+      plannedStartDate,
+    );
+    if (!replacement) return;
+
+    setRequests((current) =>
+      current.some((request) => request.cropId === replacement.cropId)
+        ? current
+        : [
+            ...current,
+            {
+              cropId: replacement.cropId,
+              priority: "nice",
+              intent: "normal",
+              placementMode: "auto",
+            },
+          ],
+    );
+    setPlacements((current) => [...current, replacement]);
+    setSelectedId(replacement.id);
   }
 
   function updateGardenName(name: string) {
@@ -1073,6 +1161,11 @@ export function App() {
   });
   const recommendedCrops = suggestAdditionalCrops(requests, 3);
   const planScore = analyzePlacements(placements, garden.beds, garden.accessZones);
+  const taskToday = getTodayIsoDate();
+  const gardenTasks = generateGardenTasks(placements, taskOverrides);
+  const openTasks = gardenTasks.filter((task) => task.status === "planned");
+  const overdueTasks = openTasks.filter((task) => task.dueDate < taskToday);
+  const nextTasks = openTasks.slice(0, 12);
   const placementAnalysis = requests.map((request) => {
     const crop = cropById[request.cropId];
     const cropPlacements = placements.filter((placement) => placement.cropId === request.cropId);
@@ -1377,14 +1470,20 @@ export function App() {
 
       <aside className="planner-panel">
         <nav className="sidebar-tabs" aria-label="Sidebar sections">
-          {(["garden", "crops", "analysis"] as const).map((tab) => (
+          {(["garden", "crops", "analysis", "tasks"] as const).map((tab) => (
             <button
               key={tab}
               type="button"
               className={activeSidebarTab === tab ? "active" : ""}
               onClick={() => setActiveSidebarTab(tab)}
             >
-              {tab === "garden" ? "Garden" : tab === "crops" ? "Crops" : "Analysis"}
+              {tab === "garden"
+                ? "Garden"
+                : tab === "crops"
+                  ? "Crops"
+                  : tab === "analysis"
+                    ? "Analysis"
+                    : "Tasks"}
             </button>
           ))}
         </nav>
@@ -2045,6 +2144,41 @@ export function App() {
                       </label>
                     ))}
                   </div>
+                  {selectedReplacementCrop &&
+                  ((selectedPlacement.status ?? "planned") === "harvested" ||
+                    (selectedPlacement.status ?? "planned") === "removed") ? (
+                    <div className="replacement-panel">
+                      <label className="field-label">
+                        Follow-up crop
+                        <select
+                          value={selectedReplacementCrop}
+                          onChange={(event) => setReplacementCropId(event.currentTarget.value as CropId)}
+                        >
+                          {replacementCropOptions.map((crop) => (
+                            <option value={crop.id} key={crop.id}>
+                              {crop.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <p>
+                        Uses the same bed area and recalculates the plant count from the follow-up crop
+                        spacing.
+                      </p>
+                      <p>
+                        {cropById[selectedReplacementCrop].plantingWindow} - harvest{" "}
+                        {cropById[selectedReplacementCrop].harvestWindow}.
+                      </p>
+                      <button
+                        className="secondary-action"
+                        type="button"
+                        onClick={addReplacementForSelectedPlacement}
+                      >
+                        <Plus size={17} />
+                        Add replacement block
+                      </button>
+                    </div>
+                  ) : null}
                   <p>Projected yield from this block: {describePlacementYield(selectedPlacement)}.</p>
                   <p>{selectedPlacement.reason}</p>
                   <button
@@ -2071,6 +2205,94 @@ export function App() {
               </button>
             </section>
           </>
+        ) : null}
+
+        {activeSidebarTab === "tasks" ? (
+          <section className="panel-section">
+            <div className="section-title">
+              <CalendarDays size={18} />
+              <h2>Task manager</h2>
+            </div>
+            {gardenTasks.length > 0 ? (
+              <>
+                <div className="task-summary">
+                  <div>
+                    <strong>{openTasks.length}</strong>
+                    <span>Open</span>
+                  </div>
+                  <div>
+                    <strong>{overdueTasks.length}</strong>
+                    <span>Overdue</span>
+                  </div>
+                  <div>
+                    <strong>{gardenTasks.filter((task) => task.status === "done").length}</strong>
+                    <span>Done</span>
+                  </div>
+                </div>
+                <div className="task-list">
+                  {(nextTasks.length > 0 ? nextTasks : gardenTasks.slice(0, 12)).map((task) => {
+                    const placement = placements.find((candidate) => candidate.id === task.placementId);
+                    const bed = garden.beds.find((candidate) => candidate.id === placement?.bedId);
+                    const overdue = task.status === "planned" && task.dueDate < taskToday;
+
+                    return (
+                      <div
+                        className={[
+                          "task-row",
+                          task.status,
+                          task.priority === "high" ? "high-priority" : "",
+                          overdue ? "overdue" : "",
+                        ]
+                          .filter(Boolean)
+                          .join(" ")}
+                        key={task.id}
+                      >
+                        <div>
+                          <strong>{task.title}</strong>
+                          <span>
+                            {task.dueDate} - {cropById[task.cropId].name}
+                            {bed ? ` - ${bed.name}` : ""}
+                          </span>
+                          <p>{task.details}</p>
+                        </div>
+                        <div className="task-controls">
+                          <select
+                            aria-label={`${task.title} status`}
+                            value={task.status}
+                            onChange={(event) =>
+                              updateTaskStatus(task.id, event.currentTarget.value as GardenTaskStatus)
+                            }
+                          >
+                            <option value="planned">Planned</option>
+                            <option value="done">Done</option>
+                            <option value="skipped">Skipped</option>
+                          </select>
+                          {placement ? (
+                            <button
+                              className="secondary-action compact-action"
+                              type="button"
+                              onClick={() => {
+                                setSelectedId(placement.id);
+                                setSelectedBedId("");
+                                setSelectedAccessZoneId("");
+                                setActiveSidebarTab("analysis");
+                              }}
+                            >
+                              Show block
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              <p className="muted">
+                Add planned start, planted, harvest, or removed dates to crop blocks to generate garden tasks.
+              </p>
+            )}
+          </section>
         ) : null}
       </aside>
     </main>

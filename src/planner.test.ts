@@ -14,6 +14,7 @@ import {
   analyzePlacements,
   canInterplant,
   createAdditionalPlacement,
+  createReplacementPlacement,
   createSuggestions,
   getBlockLayoutFromSize,
   getBlockLayout,
@@ -166,6 +167,54 @@ describe("planner", () => {
     expect(tomato?.cropId).toBe("tomato");
     expect(analysis.findings.some((finding) => finding.message.includes("Overlaps crop block"))).toBe(false);
     expect(analysis.findings.some((finding) => finding.message.includes("interplanted with"))).toBe(true);
+  });
+
+  it("can automatically interplant even when the companion crop is requested before its host", () => {
+    const optimized = optimizePlacementsForRequests(
+      [
+        { ...request("basil", "some"), placementMode: "auto" },
+        { ...request("tomato", "lots"), placementMode: "auto" },
+      ],
+      [],
+      469,
+      beds,
+      [],
+    );
+    const basil = optimized.find((placement) => placement.cropId === "basil")!;
+    const tomato = optimized.find((placement) => placement.id === basil.hostPlacementId);
+    const analysis = analyzePlacements(optimized, beds, []);
+
+    expect(basil.mode).toBe("interplant");
+    expect(tomato?.cropId).toBe("tomato");
+    expect(analysis.findings.some((finding) => finding.message.includes("Overlaps crop block"))).toBe(false);
+  });
+
+  it("automatically interplants what fits and places overflow as standalone blocks", () => {
+    const optimized = optimizePlacementsForRequests(
+      [
+        { ...request("tomato"), placementMode: "auto" },
+        { ...request("basil", "lots"), placementMode: "auto" },
+      ],
+      [],
+      470,
+      beds,
+      [],
+    );
+    const basilBlocks = optimized.filter((placement) => placement.cropId === "basil");
+    const interplantedBasilPlants = basilBlocks
+      .filter((placement) => placement.mode === "interplant")
+      .reduce((total, placement) => total + placement.plantCount, 0);
+    const standaloneBasilPlants = basilBlocks
+      .filter((placement) => placement.mode !== "interplant")
+      .reduce((total, placement) => total + placement.plantCount, 0);
+    const analysis = analyzePlacements(optimized, beds, []);
+
+    expect(interplantedBasilPlants).toBeGreaterThan(0);
+    expect(standaloneBasilPlants).toBeGreaterThan(0);
+    expect(interplantedBasilPlants + standaloneBasilPlants).toBe(
+      getStarterPlantsForIntent(cropById.basil, "lots"),
+    );
+    expect(analysis.findings.some((finding) => finding.message.includes("Overlaps crop block"))).toBe(false);
   });
 
   it("does not automatically interplant when standalone is forced", () => {
@@ -706,6 +755,66 @@ describe("planner", () => {
 
     expect(getCompanionSummary(tomato, [tomato, cabbage])).toBe("No companion conflict");
     expect(analysis.findings.some((finding) => finding.message.includes("Avoid near"))).toBe(false);
+  });
+
+  it("creates a planned replacement block in the same geometry as a harvested block", () => {
+    const rightUpper = beds.find((bed) => bed.id === "right-upper")!;
+    const harvestedTomato: Placement = {
+      id: "tomato",
+      cropId: "tomato",
+      bedId: rightUpper.id,
+      status: "harvested",
+      plantedDate: "2026-05-15",
+      harvestDate: "2026-08-01",
+      plantCount: 1,
+      columns: 1,
+      rows: 1,
+      x: rightUpper.x + 20,
+      y: rightUpper.y + 20,
+      width: 120,
+      height: 80,
+      locked: false,
+      reason: "Finished tomato.",
+    };
+
+    const replacement = createReplacementPlacement(harvestedTomato, "lettuce", 123, beds)!;
+
+    expect(replacement.cropId).toBe("lettuce");
+    expect(replacement.status).toBe("planned");
+    expect(replacement.plannedStartDate).toBe("2026-08-01");
+    expect(replacement.x).toBe(harvestedTomato.x);
+    expect(replacement.y).toBe(harvestedTomato.y);
+    expect(replacement.width).toBe(harvestedTomato.width);
+    expect(replacement.height).toBe(harvestedTomato.height);
+    expect(replacement.plantCount).toBeGreaterThan(harvestedTomato.plantCount);
+    expect(replacement.reason).toContain("replaces harvested Tomato");
+  });
+
+  it("lets a replacement crop reuse harvested space without overlap errors", () => {
+    const rightUpper = beds.find((bed) => bed.id === "right-upper")!;
+    const harvestedTomato: Placement = {
+      id: "tomato",
+      cropId: "tomato",
+      bedId: rightUpper.id,
+      status: "harvested",
+      plantedDate: "2026-05-15",
+      harvestDate: "2026-08-01",
+      plantCount: 1,
+      columns: 1,
+      rows: 1,
+      x: rightUpper.x + 20,
+      y: rightUpper.y + 20,
+      width: 120,
+      height: 80,
+      locked: false,
+      reason: "Finished tomato.",
+    };
+    const replacement = createReplacementPlacement(harvestedTomato, "lettuce", 123, beds, "2026-08-01")!;
+
+    const analysis = analyzePlacements([harvestedTomato, replacement], beds, []);
+
+    expect(placementsOverlapInTime(harvestedTomato, replacement)).toBe(false);
+    expect(analysis.findings.some((finding) => finding.message.includes("Overlaps crop block"))).toBe(false);
   });
 
   it("allows declared basil interplanting inside tomato blocks when plant clearance is sufficient", () => {
